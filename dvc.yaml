@@ -5,40 +5,20 @@ stages:
       - data/ingestion/main.py
       - data/ingestion/downloaders/
     outs:
-      - gs://agriguard-ac215-data/data_raw_new/:
-          type: dir
-          desc: Raw ingested data from satellite, weather, yield sources
-    metrics:
-      - data/ingestion/ingest_metrics.json:
-          type: json
+      - gs://agriguard-ac215-data/data_raw_new/
 
   process_data:
     cmd: python data/pipeline_complete.py
     deps:
-      - gs://agriguard-ac215-data/data_raw_new/
       - data/processing/
       - data/validation/
     outs:
-      - gs://agriguard-ac215-data/data_clean/daily/:
-          type: dir
-          desc: Cleaned daily aggregations (182K records)
-      - gs://agriguard-ac215-data/data_clean/weekly/:
-          type: dir
-          desc: Cleaned weekly aggregations (26K records)
-      - gs://agriguard-ac215-data/data_clean/climatology/:
-          type: dir
-          desc: Long-term normals (2.7K records)
-      - gs://agriguard-ac215-data/data_clean/metadata/:
-          type: dir
-          desc: Pipeline execution metadata
-    metrics:
-      - data/processing/quality_metrics.json:
-          type: json
+      - gs://agriguard-ac215-data/data_clean/daily/
+      - gs://agriguard-ac215-data/data_clean/weekly/
+      - gs://agriguard-ac215-data/data_clean/climatology/
+      - gs://agriguard-ac215-data/data_clean/metadata/
 
   validate_data:
     cmd: python data/validation/schema_validator.py
-    deps:
-      - gs://agriguard-ac215-data/data_clean/
-    metrics:
-      - data/validation/validation_report.json:
-          type: json
+    outs:
+      - data/validation/validation_report.json
