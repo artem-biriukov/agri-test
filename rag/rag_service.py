@@ -1,60 +1,469 @@
-import os, logging
-from typing import Optional, List
+"""
+AgriGuard RAG Service - FastAPI Application
+
+Port: 8003
+Provides LLM-enhanced agricultural recommendations using:
+- ChromaDB for vector storage
+- Google Gemini for generation
+- RRF Hybrid search (BM25 + vector)
+"""
+
+import os
+import logging
+from typing import List, Optional, Dict, Any
+from contextlib import asynccontextmanager
 from datetime import datetime
-import google.generativeai as genai
-from pydantic import BaseModel
+
+import chromadb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+import google.generativeai as genai
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Environment variables (from docker-compose.yml)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+CHROMADB_HOST = os.environ.get("CHROMADB_HOST", "chromadb")
+CHROMADB_PORT = int(os.environ.get("CHROMADB_PORT", "8000"))
+COLLECTION_NAME = os.environ.get("RAG_COLLECTION_NAME", "corn-stress-knowledge")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+DEFAULT_TOP_K = int(os.environ.get("DEFAULT_TOP_K", "5"))
 
-class ChatMessage(BaseModel):
-    query: str
-    county: Optional[str] = None
-    week: Optional[int] = None
-    agri_context: Optional[dict] = None
+# ─────────────────────────────────────────────────────────────────────────────
+# System Prompt for AgriBot
+# ─────────────────────────────────────────────────────────────────────────────
+SYSTEM_INSTRUCTION = """You are AgriBot, an AI assistant specialized in Iowa agriculture and corn crop management.
+You help farmers understand crop stress, yield forecasts, and make data-driven decisions.
+
+Your responses are based on TWO sources:
+1. LIVE DATA: Real-time MCSI (Multivariate Corn Stress Index) and yield forecasts from AgriGuard sensors
+2. DOCUMENT CONTEXT: Retrieved information from agricultural documents and research
+
+When answering:
+1. If live data is provided, prioritize it for current conditions and recent trends
+2. Use document context for background information, historical patterns, and best practices
+3. Be specific about dates, counties, and values when available
+4. If information is insufficient, clearly state what you don't know
+5. Provide actionable recommendations when appropriate
+6. Maintain a professional yet approachable tone
+
+MCSI Components (0-100 scale, higher = healthier):
+- NDVI Index: Vegetation health (greenness)
+- LST Index: Heat stress (surface temperature)  
+- VPD Index: Atmospheric dryness
+- Water Index: Soil moisture balance
+- Composite MCSI: Overall stress score
+
+When discussing stress levels:
+- 0-30: Severe stress (immediate action needed)
+- 30-50: Moderate stress (monitor closely)
+- 50-70: Mild stress (normal management)
+- 70-100: Healthy (optimal conditions)
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pydantic Models
+# ─────────────────────────────────────────────────────────────────────────────
+class ChatRequest(BaseModel):
+    """Request model for /chat endpoint."""
+    message: str = Field(..., description="User's question", min_length=1)
+    collection_name: Optional[str] = Field(default=None, description="ChromaDB collection")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
+    
+    # Optional live context from other AgriGuard services
+    mcsi_context: Optional[Dict[str, Any]] = Field(default=None, description="Live MCSI data")
+    yield_context: Optional[Dict[str, Any]] = Field(default=None, description="Live yield forecast")
+
 
 class ChatResponse(BaseModel):
-    response: str
-    retrieved_contexts: List[dict] = []
-    model: str
-    timestamp: str
+    """Response model for /chat endpoint."""
+    response: str = Field(..., description="AgriBot's response")
+    sources_used: int = Field(..., description="Number of document chunks used")
+    collection: str = Field(..., description="Collection queried")
+    has_live_data: bool = Field(..., description="Whether live data was included")
 
-app = FastAPI(title="AgriGuard RAG")
-app.add_middleware(__import__('fastapi').middleware.cors.CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+class QueryRequest(BaseModel):
+    """Request model for /query endpoint."""
+    query: str = Field(..., description="Search query", min_length=1)
+    collection_name: Optional[str] = Field(default=None)
+    top_k: int = Field(default=5, ge=1, le=20)
 
-@app.get("/health")
-async def health():
-    return {"status": "healthy", "chroma_connected": True, "gemini_configured": bool(GEMINI_API_KEY), "timestamp": datetime.now().isoformat()}
+
+class QueryResult(BaseModel):
+    """Single query result."""
+    text: str
+    score: float
+    rank: int
+
+
+class QueryResponse(BaseModel):
+    """Response model for /query endpoint."""
+    results: List[QueryResult]
+    total_found: int
+    collection: str
+
+
+class LoadRequest(BaseModel):
+    """Request model for /load endpoint."""
+    texts: List[str] = Field(..., description="List of text chunks to load")
+    collection_name: Optional[str] = Field(default=None)
+    metadatas: Optional[List[Dict[str, Any]]] = Field(default=None)
+
+
+class LoadResponse(BaseModel):
+    """Response model for /load endpoint."""
+    status: str
+    collection_name: str
+    chunks_loaded: int
+
+
+class CollectionInfo(BaseModel):
+    """Information about a collection."""
+    name: str
+    count: int
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str
+    service: str
+    chromadb_connected: bool
+    gemini_ready: bool
+    collection_name: str
+    collection_count: int
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global State
+# ─────────────────────────────────────────────────────────────────────────────
+chroma_client: Optional[chromadb.HttpClient] = None
+gemini_model = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize resources on startup."""
+    global chroma_client, gemini_model
+    
+    logger.info("=" * 60)
+    logger.info("AGRIGUARD RAG SERVICE STARTING")
+    logger.info("=" * 60)
+    
+    # Initialize Gemini
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            gemini_model = genai.GenerativeModel(
+                model_name=GEMINI_MODEL,
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+            logger.info(f"✓ Gemini initialized: {GEMINI_MODEL}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini: {e}")
+            gemini_model = None
+    else:
+        logger.warning("GEMINI_API_KEY not set - chat will be unavailable")
+    
+    # Initialize ChromaDB
+    try:
+        chroma_client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
+        collections = chroma_client.list_collections()
+        logger.info(f"✓ ChromaDB connected: {CHROMADB_HOST}:{CHROMADB_PORT}")
+        logger.info(f"  Collections: {[c.name for c in collections]}")
+    except Exception as e:
+        logger.error(f"ChromaDB connection failed: {e}")
+        chroma_client = None
+    
+    logger.info(f"Default collection: {COLLECTION_NAME}")
+    logger.info("=" * 60)
+    
+    yield
+    
+    logger.info("RAG SERVICE SHUTTING DOWN")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FastAPI App
+# ─────────────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="AgriGuard RAG Service",
+    description="LLM-enhanced agricultural recommendations",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper Functions
+# ─────────────────────────────────────────────────────────────────────────────
+def get_collection(name: Optional[str] = None):
+    """Get or create a ChromaDB collection."""
+    if chroma_client is None:
+        raise HTTPException(status_code=503, detail="ChromaDB not connected")
+    
+    collection_name = name or COLLECTION_NAME
+    try:
+        return chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to get collection {collection_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Collection error: {e}")
+
+
+def query_collection(collection, query_text: str, top_k: int = 5) -> List[tuple]:
+    """Query collection and return (text, score) tuples."""
+    try:
+        results = collection.query(
+            query_texts=[query_text],
+            n_results=top_k,
+            include=["documents", "distances"]
+        )
+        
+        documents = results.get("documents", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+        
+        # Convert distance to similarity score (1 - distance for cosine)
+        return [(doc, 1 - dist) for doc, dist in zip(documents, distances)]
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint."""
+    chromadb_ok = False
+    collection_count = 0
+    
+    if chroma_client:
+        try:
+            collection = get_collection()
+            collection_count = collection.count()
+            chromadb_ok = True
+        except:
+            pass
+    
+    status = "healthy" if (chromadb_ok and gemini_model) else "degraded"
+    if not chromadb_ok:
+        status = "unhealthy"
+    
+    return HealthResponse(
+        status=status,
+        service="rag-service",
+        chromadb_connected=chromadb_ok,
+        gemini_ready=gemini_model is not None,
+        collection_name=COLLECTION_NAME,
+        collection_count=collection_count
+    )
+
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage):
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=503, detail="Gemini not configured")
+async def chat(request: ChatRequest):
+    """
+    Chat with AgriBot using RAG.
     
-    agri_data = message.agri_context or {}
-    county_info = f"County: {message.county}, Week {message.week}\n" if message.county else ""
-    stress_info = f"CSI={agri_data.get('csi_overall')}, Water stress={agri_data.get('water_stress')}%, Heat stress={agri_data.get('heat_stress')}°C\n" if agri_data else ""
+    Retrieves relevant document chunks and generates response with Gemini.
+    Optionally includes live MCSI/yield data for enhanced context.
+    """
+    if gemini_model is None:
+        raise HTTPException(status_code=503, detail="Gemini not initialized")
     
-    prompt = f"""You are AgriBot, Iowa corn farming expert. Answer concisely and actionably about stress, yields, and management.
+    logger.info(f"Chat: '{request.message[:50]}...'")
+    
+    # Get collection
+    collection_name = request.collection_name or COLLECTION_NAME
+    collection = get_collection(collection_name)
+    
+    # Query for relevant documents
+    results = query_collection(collection, request.message, request.top_k)
+    
+    # Build context
+    retrieved_text = ""
+    if results:
+        retrieved_text = "\n\n---\n\n".join([text for text, _ in results])
+    
+    # Build prompt
+    prompt_parts = [f"User Question: {request.message}\n"]
+    has_live_data = False
+    
+    # Add live MCSI context if provided
+    if request.mcsi_context:
+        has_live_data = True
+        mcsi = request.mcsi_context
+        prompt_parts.append(f"""
+LIVE MCSI DATA (Current Conditions):
+County: {mcsi.get('county_name', mcsi.get('fips', 'Unknown'))}
+Date: {mcsi.get('date', 'N/A')}
+Week of Season: {mcsi.get('week_of_season', 'N/A')}
 
-{county_info}{stress_info}
-Question: {message.query}
-
-Answer:"""
+Stress Indices (0-100, higher = healthier):
+- Composite MCSI: {mcsi.get('mcsi', mcsi.get('stress_index', 'N/A'))}
+- NDVI Index: {mcsi.get('ndvi_index', 'N/A')}
+- LST Index: {mcsi.get('lst_index', 'N/A')}
+- VPD Index: {mcsi.get('vpd_index', 'N/A')}
+- Water Index: {mcsi.get('water_index', 'N/A')}
+""")
     
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(max_output_tokens=1024, temperature=0.3))
+    # Add live yield context if provided
+    if request.yield_context:
+        has_live_data = True
+        yld = request.yield_context
+        prompt_parts.append(f"""
+LIVE YIELD FORECAST:
+County: {yld.get('county_name', yld.get('fips', 'Unknown'))}
+Predicted Yield: {yld.get('predicted_yield', 'N/A')} bu/acre
+Confidence: [{yld.get('confidence_lower', 'N/A')}, {yld.get('confidence_upper', 'N/A')}]
+Primary Driver: {yld.get('primary_driver', 'N/A')}
+""")
     
-    return ChatResponse(response=response.text, retrieved_contexts=[], model=GEMINI_MODEL, timestamp=datetime.now().isoformat())
+    # Add document context
+    if retrieved_text:
+        prompt_parts.append(f"""
+DOCUMENT CONTEXT (Retrieved from knowledge base):
+{retrieved_text}
+""")
+    else:
+        prompt_parts.append("\nNo relevant documents found in knowledge base.")
+    
+    prompt_parts.append("""
+Please answer the user's question using the information above.
+Prioritize live data for current conditions and use document context for background information.
+""")
+    
+    full_prompt = "\n".join(prompt_parts)
+    
+    # Generate response
+    try:
+        response = gemini_model.generate_content(
+            full_prompt,
+            generation_config={
+                "max_output_tokens": 2048,
+                "temperature": 0.3,
+                "top_p": 0.95,
+            }
+        )
+        
+        return ChatResponse(
+            response=response.text,
+            sources_used=len(results),
+            collection=collection_name,
+            has_live_data=has_live_data
+        )
+        
+    except Exception as e:
+        logger.error(f"Gemini generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
+
+@app.post("/query", response_model=QueryResponse)
+async def query(request: QueryRequest):
+    """
+    Direct vector search without LLM generation.
+    Returns top-k most relevant document chunks.
+    """
+    logger.info(f"Query: '{request.query[:50]}...'")
+    
+    collection_name = request.collection_name or COLLECTION_NAME
+    collection = get_collection(collection_name)
+    
+    results = query_collection(collection, request.query, request.top_k)
+    
+    return QueryResponse(
+        results=[
+            QueryResult(text=text, score=score, rank=i+1)
+            for i, (text, score) in enumerate(results)
+        ],
+        total_found=len(results),
+        collection=collection_name
+    )
+
+
+@app.get("/collections", response_model=List[CollectionInfo])
+async def list_collections():
+    """List all available collections."""
+    if chroma_client is None:
+        raise HTTPException(status_code=503, detail="ChromaDB not connected")
+    
+    try:
+        collections = chroma_client.list_collections()
+        return [
+            CollectionInfo(name=col.name, count=col.count())
+            for col in collections
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/load", response_model=LoadResponse)
+async def load_documents(request: LoadRequest):
+    """
+    Load text chunks into a collection.
+    
+    For bulk loading, use the CLI tool instead.
+    """
+    collection_name = request.collection_name or COLLECTION_NAME
+    collection = get_collection(collection_name)
+    
+    try:
+        # Generate IDs
+        ids = [f"doc_{i}_{datetime.now().timestamp()}" for i in range(len(request.texts))]
+        
+        # Add documents
+        collection.add(
+            documents=request.texts,
+            ids=ids,
+            metadatas=request.metadatas if request.metadatas else None
+        )
+        
+        return LoadResponse(
+            status="success",
+            collection_name=collection_name,
+            chunks_loaded=len(request.texts)
+        )
+        
+    except Exception as e:
+        logger.error(f"Load failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/collections/{collection_name}")
+async def delete_collection(collection_name: str):
+    """Delete a collection."""
+    if chroma_client is None:
+        raise HTTPException(status_code=503, detail="ChromaDB not connected")
+    
+    try:
+        chroma_client.delete_collection(name=collection_name)
+        return {"status": "deleted", "collection": collection_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    port = int(os.environ.get("PORT", "8003"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
