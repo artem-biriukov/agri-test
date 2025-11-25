@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  mcsi-api:
+    build: ./analytics/mcsi
+    container_name: mcsi-api
+    ports:
+      - "8000:8000"
+    networks:
+      - agriguard
+
+  backend:
+    build: ./backend
+    container_name: agriguard-backend
+    environment:
+      MCSI_URL: http://mcsi-api:8000
+    ports:
+      - "9000:8000"
+    depends_on:
+      - mcsi-api
+    networks:
+      - agriguard
+
+  frontend:
+    build: ./frontend
+    container_name: agriguard-frontend
+    environment:
+      REACT_APP_BACKEND_URL: http://localhost:9000
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - agriguard
+
+networks:
+  agriguard:
