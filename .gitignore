@@ -4,3 +4,5 @@
 
 # DVC cache
 .dvc/cache/
+secrets/
+*.json

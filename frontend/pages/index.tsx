@@ -117,9 +117,6 @@ const WEEK_HINTS = {
   26: "R7 (Mature - Harvest ready)"
 };
 
-// API URL - uses orchestrator on port 8002
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8002';
-
 export default function Home() {
   const [county, setCounty] = useState('19001');
   const [selectedWeek, setSelectedWeek] = useState(18);
@@ -128,12 +125,6 @@ export default function Home() {
   const [currentData, setCurrentData] = useState(null);
   const [yield_, setYield] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // Get county name from code
-  const getCountyName = (code: string) => {
-    const found = IOWA_COUNTIES.find(c => c.code === code);
-    return found ? found.name : code;
-  };
 
   const fetchData = useCallback(async (countyCode) => {
     setLoading(true);
@@ -164,58 +155,52 @@ export default function Home() {
       if (!currentData) return;
       
       try {
-        const res = await fetch(`http://localhost:8001/forecast`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fips: county,
-            week: selectedWeek,
-            year: 2025,
-            heat_days: getValueSafe(currentData.heat_stress_index) || 10,
-            water_deficit: getValueSafe(currentData.water_stress_index) || 30,
-            precip: 120,
-            ndvi_avg: 0.65,
-            ndvi_min: 0.45
-          })
-        });
+        // Call orchestrator instead of direct yield service - uses XGBoost!
+        const res = await fetch(`http://localhost:8002/yield/${county}?week=${selectedWeek}`);
         if (res.ok) {
           const data = await res.json();
-          setYield(data);
+          // Map orchestrator response to expected format
+          setYield({
+            predicted_yield: data.predicted_yield,
+            uncertainty: data.confidence_interval,
+            confidence_lower: data.confidence_lower,
+            confidence_upper: data.confidence_upper,
+            model_r2: data.model_r2,
+            primary_driver: data.primary_driver
+          });
         }
       } catch (err) {
         console.error('Yield fetch error:', err);
       }
     };
-
     fetchYield();
   }, [currentData, county, selectedWeek]);
 
-  const getValueSafe = (val) => {
-    if (val === null || val === undefined) return null;
-    if (typeof val === 'object' && val.value !== undefined) return val.value;
-    return val;
-  };
-
-  const getStressColor = (val) => {
-    const v = getValueSafe(val);
-    if (v === null) return '#6b7280';
-    if (v < 25) return '#22c55e';
-    if (v < 50) return '#84cc16';
-    if (v < 75) return '#f59e0b';
+  const getStressColor = (value) => {
+    if (value == null) return '#6b7280';
+    if (value < 20) return '#10b981';
+    if (value < 40) return '#f59e0b';
+    if (value < 60) return '#f97316';
     return '#ef4444';
   };
 
-  const getStressLabel = (val) => {
-    const v = getValueSafe(val);
-    if (v === null) return 'N/A';
-    if (v < 25) return 'Low';
-    if (v < 50) return 'Moderate';
-    if (v < 75) return 'High';
-    return 'Severe';
+  const getStressLabel = (value) => {
+    if (value == null) return 'N/A';
+    if (value < 20) return 'Healthy';
+    if (value < 40) return 'Mild Stress';
+    if (value < 60) return 'Moderate Stress';
+    return 'Severe Stress';
   };
 
-  const chartData = timeseries.map(item => ({
-    date: `W${item.week_of_season}`,
+  const getValueSafe = (obj) => {
+    if (typeof obj === 'number') return obj;
+    if (obj && typeof obj.value === 'number') return obj.value;
+    return null;
+  };
+
+  const chartData = timeseries.map((item) => ({
+    date: `${item.week_start?.slice(5, 10) || ''}`,
+    week: item.week_of_season,
     overall: getValueSafe(item.overall_stress_index),
     water: getValueSafe(item.water_stress_index),
     heat: getValueSafe(item.heat_stress_index),
@@ -370,14 +355,17 @@ export default function Home() {
                 </div>
               </div>
             </div>
-
             {/* RAG Chat Section */}
             <div className="bg-white p-8 rounded-lg shadow mt-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">💬 AgriBot Assistant</h2>
+              <p className="text-gray-600 text-sm mb-6">
+                Ask questions about corn stress, yields, or farming practices. AgriBot uses AI to provide intelligent insights based on your current data.
+              </p>
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200" style={{ minHeight: "500px" }}>
                 <AgriBot
-                  apiUrl={API_URL}
+                  apiUrl="http://localhost:8002"
                   fips={county}
-                  county={getCountyName(county)}
+                  county={county}
                   week={selectedWeek}
                   currentData={currentData}
                   yield_={yield_}
