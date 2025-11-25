@@ -117,6 +117,9 @@ const WEEK_HINTS = {
   26: "R7 (Mature - Harvest ready)"
 };
 
+// API URL - uses orchestrator on port 8002
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8002';
+
 export default function Home() {
   const [county, setCounty] = useState('19001');
   const [selectedWeek, setSelectedWeek] = useState(18);
@@ -125,6 +128,12 @@ export default function Home() {
   const [currentData, setCurrentData] = useState(null);
   const [yield_, setYield] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Get county name from code
+  const getCountyName = (code: string) => {
+    const found = IOWA_COUNTIES.find(c => c.code === code);
+    return found ? found.name : code;
+  };
 
   const fetchData = useCallback(async (countyCode) => {
     setLoading(true);
@@ -177,38 +186,36 @@ export default function Home() {
         console.error('Yield fetch error:', err);
       }
     };
+
     fetchYield();
-  }, [county, selectedWeek, currentData]);
+  }, [currentData, county, selectedWeek]);
 
   const getValueSafe = (val) => {
-    if (typeof val === 'number') return val;
-    if (val?.value !== undefined) return val.value;
-    return null;
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'object' && val.value !== undefined) return val.value;
+    return val;
   };
 
   const getStressColor = (val) => {
     const v = getValueSafe(val);
-    if (!v && v !== 0) return '#999';
-    if (v < 20) return '#10b981';
-    if (v < 40) return '#3b82f6';
-    if (v < 60) return '#f59e0b';
-    if (v < 80) return '#ef4444';
-    return '#7f1d1d';
+    if (v === null) return '#6b7280';
+    if (v < 25) return '#22c55e';
+    if (v < 50) return '#84cc16';
+    if (v < 75) return '#f59e0b';
+    return '#ef4444';
   };
 
   const getStressLabel = (val) => {
     const v = getValueSafe(val);
-    if (!v && v !== 0) return 'N/A';
-    if (v < 20) return 'HEALTHY';
-    if (v < 40) return 'MILD';
-    if (v < 60) return 'MODERATE';
-    if (v < 80) return 'SEVERE';
-    return 'CRITICAL';
+    if (v === null) return 'N/A';
+    if (v < 25) return 'Low';
+    if (v < 50) return 'Moderate';
+    if (v < 75) return 'High';
+    return 'Severe';
   };
 
   const chartData = timeseries.map(item => ({
-    week: item.week_of_season,
-    date: item.week_start ? `${item.week_start.substring(5, 7)}-${item.week_start.substring(8, 10)}` : 'N/A',
+    date: `W${item.week_of_season}`,
     overall: getValueSafe(item.overall_stress_index),
     water: getValueSafe(item.water_stress_index),
     heat: getValueSafe(item.heat_stress_index),
@@ -363,16 +370,14 @@ export default function Home() {
                 </div>
               </div>
             </div>
+
             {/* RAG Chat Section */}
             <div className="bg-white p-8 rounded-lg shadow mt-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">💬 AgriBot Assistant</h2>
-              <p className="text-gray-600 text-sm mb-6">
-                Ask questions about corn stress, yields, or farming practices. AgriBot uses AI to provide intelligent insights based on your current data.
-              </p>
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200" style={{ minHeight: "500px" }}>
                 <AgriBot
-                  ragServiceUrl="http://localhost:8003"
-                  county={county}
+                  apiUrl={API_URL}
+                  fips={county}
+                  county={getCountyName(county)}
                   week={selectedWeek}
                   currentData={currentData}
                   yield_={yield_}
