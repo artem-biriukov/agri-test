@@ -176,26 +176,31 @@ export default function Home() {
     fetchYield();
   }, [currentData, county, selectedWeek]);
 
-  const getStressColor = (value) => {
-    if (value == null) return '#6b7280';
-    if (value < 20) return '#10b981';
-    if (value < 40) return '#f59e0b';
-    if (value < 60) return '#f97316';
-    return '#ef4444';
+  // Helper to extract value from number or object with .value property
+  const getValueSafe = (obj) => {
+    if (typeof obj === 'number') return obj;
+    if (obj && typeof obj.value === 'number') return obj.value;
+    return null;
   };
 
-  const getStressLabel = (value) => {
+  // ALL stress indices use same scale: 0-100, higher = MORE stress
+  // 0-20: Healthy, 20-40: Mild, 40-60: Moderate, 60-80: Severe, 80-100: Critical
+  const getStressColor = (obj) => {
+    const value = getValueSafe(obj);
+    if (value == null) return '#6b7280';
+    if (value < 20) return '#10b981';  // green - healthy
+    if (value < 40) return '#f59e0b';  // yellow - mild
+    if (value < 60) return '#f97316';  // orange - moderate
+    return '#ef4444';                   // red - severe
+  };
+
+  const getStressLabel = (obj) => {
+    const value = getValueSafe(obj);
     if (value == null) return 'N/A';
     if (value < 20) return 'Healthy';
     if (value < 40) return 'Mild Stress';
     if (value < 60) return 'Moderate Stress';
     return 'Severe Stress';
-  };
-
-  const getValueSafe = (obj) => {
-    if (typeof obj === 'number') return obj;
-    if (obj && typeof obj.value === 'number') return obj.value;
-    return null;
   };
 
   const chartData = timeseries.map((item) => ({

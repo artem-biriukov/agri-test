@@ -81,7 +81,7 @@ class ChatRequest(BaseModel):
     """Request model for /chat endpoint."""
     message: str = Field(..., description="User's question", min_length=1)
     collection_name: Optional[str] = Field(default=None, description="ChromaDB collection")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
+    top_k: int = Field(default=3, ge=1, le=20, description="Number of chunks to retrieve")
     
     # Optional live context from other AgriGuard services
     mcsi_context: Optional[Dict[str, Any]] = Field(default=None, description="Live MCSI data")
@@ -324,8 +324,7 @@ County: {mcsi.get('county_name', mcsi.get('fips', 'Unknown'))}
 Date: {mcsi.get('date', 'N/A')}
 Week of Season: {mcsi.get('week_of_season', 'N/A')}
 
-Stress Indices (0-100 scale, HIGHER = MORE STRESS):
-(0-20: Healthy, 20-40: Mild, 40-60: Moderate, 60-80: Severe, 80-100: Critical)
+Stress Indices (0-100 scale, higher = healthier, 0-30 = severe stress):
 - Overall Stress Index: {mcsi.get('overall_stress', 'N/A')}
 - Water Stress: {mcsi.get('water_stress', 'N/A')} 
 - Heat Stress: {mcsi.get('heat_stress', 'N/A')}
@@ -351,8 +350,11 @@ Confidence: [{yld.get('confidence_lower', 'N/A')}, {yld.get('confidence_upper', 
 Primary Driver: {yld.get('primary_driver', 'N/A')}
 """)
     
-    # Add document context
+    # Add document context (truncate to prevent too long prompts)
     if retrieved_text:
+        # Limit to ~3000 chars to stay within token limits
+        if len(retrieved_text) > 3000:
+            retrieved_text = retrieved_text[:3000] + "\n... (truncated)"
         prompt_parts.append(f"""
 DOCUMENT CONTEXT (Retrieved from knowledge base):
 {retrieved_text}
@@ -366,27 +368,68 @@ Prioritize live data for current conditions and use document context for backgro
 """)
     
     full_prompt = "\n".join(prompt_parts)
+    logger.info(f"Prompt length: {len(full_prompt)} chars, ~{len(full_prompt)//4} tokens")
     
     # Generate response
     try:
-        from google.generativeai.types import HarmCategory, HarmBlockThreshold
         response = gemini_model.generate_content(
             full_prompt,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
             generation_config={
                 "max_output_tokens": 800,
                 "temperature": 0.3,
                 "top_p": 0.95,
-            }
+            },
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
         )
         
+        # Log response details for debugging
+        logger.info(f"Response candidates: {len(response.candidates) if response.candidates else 0}")
+        if response.prompt_feedback:
+            logger.info(f"Prompt feedback: {response.prompt_feedback}")
+        
+        # Check if response was blocked
+        if not response.candidates:
+            logger.warning(f"No candidates. Prompt feedback: {response.prompt_feedback}")
+            raise Exception(f"Response blocked: {response.prompt_feedback}")
+        
+        candidate = response.candidates[0]
+        logger.info(f"Finish reason: {candidate.finish_reason}")
+        logger.info(f"Candidate content: {candidate.content}")
+        logger.info(f"Safety ratings: {candidate.safety_ratings}")
+        
+        # Finish reason meanings: 1=STOP (good), 2=MAX_TOKENS, 3=SAFETY
+        # Only block on actual SAFETY (3)
+        if candidate.finish_reason == 3 or (hasattr(candidate.finish_reason, 'name') and candidate.finish_reason.name == "SAFETY"):
+            logger.warning(f"Safety blocked. Ratings: {candidate.safety_ratings}")
+            raise Exception(f"Safety blocked: {candidate.safety_ratings}")
+        
+        # Try to get text - multiple methods
+        response_text = None
+        
+        # Method 1: Try response.text directly
+        try:
+            response_text = response.text
+            logger.info(f"Got text via response.text: {len(response_text)} chars")
+        except Exception as e:
+            logger.warning(f"response.text failed: {e}")
+        
+        # Method 2: Try candidate.content.parts
+        if not response_text:
+            if candidate.content and candidate.content.parts:
+                response_text = candidate.content.parts[0].text
+                logger.info(f"Got text via parts: {len(response_text)} chars")
+        
+        if not response_text:
+            logger.warning(f"No text in response. Finish reason: {candidate.finish_reason}")
+            raise Exception(f"No content in response (finish_reason={candidate.finish_reason})")
+        
         return ChatResponse(
-            response=response.text,
+            response=response_text,
             sources_used=len(results),
             collection=collection_name,
             has_live_data=has_live_data
@@ -394,7 +437,24 @@ Prioritize live data for current conditions and use document context for backgro
         
     except Exception as e:
         logger.error(f"Gemini generation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+        # Return fallback response instead of error
+        fallback_msg = """I'm having difficulty processing your request right now. Here's what I can tell you based on general agricultural knowledge:
+
+**General Corn Stress Indicators:**
+- 0-20: Healthy conditions, continue normal management
+- 20-40: Mild stress, monitor closely  
+- 40-60: Moderate stress, consider interventions
+- 60-80: Severe stress, take action
+- 80-100: Critical stress, emergency measures needed
+
+Please try rephrasing your question or ask about a specific topic like drought stress, heat stress, or yield forecasting."""
+        
+        return ChatResponse(
+            response=fallback_msg,
+            sources_used=0,
+            collection=collection_name,
+            has_live_data=has_live_data
+        )
 
 
 @app.post("/query", response_model=QueryResponse)
