@@ -40,29 +40,36 @@ DEFAULT_TOP_K = int(os.environ.get("DEFAULT_TOP_K", "5"))
 SYSTEM_INSTRUCTION = """You are AgriBot, an AI assistant specialized in Iowa agriculture and corn crop management.
 You help farmers understand crop stress, yield forecasts, and make data-driven decisions.
 
+IMPORTANT: Keep responses concise - 2-4 paragraphs maximum. Focus on key findings and actionable advice.
+
 Your responses are based on TWO sources:
-1. LIVE DATA: Real-time MCSI (Multivariate Corn Stress Index) and yield forecasts from AgriGuard sensors
-2. DOCUMENT CONTEXT: Retrieved information from agricultural documents and research
+1. LIVE DATA: Real-time stress indices and yield forecasts from AgriGuard sensors
+2. DOCUMENT CONTEXT: Retrieved information from agricultural documents
+
+STRESS INDEX INTERPRETATION:
+The Overall Stress Index uses a 0-100 scale where LOWER = LESS STRESS:
+- 0-30: Mild stress (crops doing okay, normal monitoring)
+- 30-50: Moderate stress (monitor closely)  
+- 50-70: Severe stress (action may be needed)
+- 70-100: Critical stress (immediate intervention required)
+
+Component Health Indices (Heat, Vegetation, Atmosphere) use 0-100 scale where HIGHER = HEALTHIER:
+- 0-30: Severe stress (very poor health)
+- 30-50: Moderate stress
+- 50-70: Mild stress
+- 70-100: Healthy (good condition)
+
+Water Stress uses 0-100 scale where HIGHER = MORE STRESS:
+- 0-30: Mild water stress
+- 30-50: Moderate water stress
+- 50-70: Severe water stress
+- 70-100: Critical water deficit
 
 When answering:
-1. If live data is provided, prioritize it for current conditions and recent trends
-2. Use document context for background information, historical patterns, and best practices
-3. Be specific about dates, counties, and values when available
-4. If information is insufficient, clearly state what you don't know
-5. Provide actionable recommendations when appropriate
-6. Maintain a professional yet approachable tone
-
-MCSI Components (0-100 scale, higher = healthier):
-- NDVI Index: Vegetation health (greenness)
-- LST Index: Heat stress (surface temperature)  
-- VPD Index: Atmospheric dryness
-- Water Index: Soil moisture balance
-- Composite MCSI: Overall stress score
-
-When discussing stress levels:
-- 0-30: Severe stress (immediate action needed)
-- 30-50: Moderate stress (monitor closely)
-- 50-70: Mild stress (normal management)
+1. Match stress level labels to what the dashboard shows (Mild, Moderate, Severe, Critical)
+2. Be specific with values but keep explanations brief
+3. Prioritize actionable recommendations
+4. Use 2-4 paragraphs maximum
 - 70-100: Healthy (optimal conditions)
 """
 
@@ -317,12 +324,19 @@ County: {mcsi.get('county_name', mcsi.get('fips', 'Unknown'))}
 Date: {mcsi.get('date', 'N/A')}
 Week of Season: {mcsi.get('week_of_season', 'N/A')}
 
-Stress Indices (0-100, higher = healthier):
-- Composite MCSI: {mcsi.get('mcsi', mcsi.get('stress_index', 'N/A'))}
-- NDVI Index: {mcsi.get('ndvi_index', 'N/A')}
-- LST Index: {mcsi.get('lst_index', 'N/A')}
-- VPD Index: {mcsi.get('vpd_index', 'N/A')}
-- Water Index: {mcsi.get('water_index', 'N/A')}
+Stress Indices (0-100 scale, HIGHER = MORE STRESS):
+(0-20: Healthy, 20-40: Mild, 40-60: Moderate, 60-80: Severe, 80-100: Critical)
+- Overall Stress Index: {mcsi.get('overall_stress', 'N/A')}
+- Water Stress: {mcsi.get('water_stress', 'N/A')} 
+- Heat Stress: {mcsi.get('heat_stress', 'N/A')}
+- Vegetation Health: {mcsi.get('vegetation_health', 'N/A')}
+- Atmospheric Stress: {mcsi.get('atmospheric_stress', 'N/A')}
+
+Raw Sensor Values (for reference):
+- NDVI: {mcsi.get('ndvi_raw', 'N/A')}
+- LST: {mcsi.get('lst_raw', 'N/A')}
+- VPD: {mcsi.get('vpd_raw', 'N/A')}
+- Water Index: {mcsi.get('water_raw', 'N/A')}
 """)
     
     # Add live yield context if provided
@@ -355,10 +369,17 @@ Prioritize live data for current conditions and use document context for backgro
     
     # Generate response
     try:
+        from google.generativeai.types import HarmCategory, HarmBlockThreshold
         response = gemini_model.generate_content(
             full_prompt,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
             generation_config={
-                "max_output_tokens": 2048,
+                "max_output_tokens": 800,
                 "temperature": 0.3,
                 "top_p": 0.95,
             }

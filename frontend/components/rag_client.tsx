@@ -69,7 +69,17 @@ const useRAGChat = (apiUrl: string) => {
     async (
       message: string,
       fips?: string,
-      includeLiveData = true
+      week?: number,
+      includeLiveData = true,
+      stressData?: {
+        overall_stress?: number;
+        water_stress?: number;
+        heat_stress?: number;
+        vegetation_health?: number;
+        atmospheric_stress?: number;
+        predicted_yield?: number;
+        yield_uncertainty?: number;
+      }
     ): Promise<void> => {
       if (!message.trim()) return;
 
@@ -92,7 +102,9 @@ const useRAGChat = (apiUrl: string) => {
           body: JSON.stringify({
             message,
             fips: fips || null,
+            week: week || null,
             include_live_data: includeLiveData,
+            stress_data: stressData || null,
           }),
         });
 
@@ -304,7 +316,17 @@ const AgriBot: React.FC<AgriBotProps> = ({
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || loading) return;
-    await sendMessage(inputValue, fips, true);
+    // Pass week and stress data to sendMessage
+    const stressData = {
+      overall_stress: currentData?.overall_stress_index,
+      water_stress: currentData?.water_stress_index?.value,
+      heat_stress: currentData?.heat_stress_index?.value,
+      vegetation_health: currentData?.vegetation_health_index?.value,
+      atmospheric_stress: currentData?.atmospheric_stress_index?.value,
+      predicted_yield: yield_?.predicted_yield,
+      yield_uncertainty: yield_?.uncertainty,
+    };
+    await sendMessage(inputValue, fips, week, true, stressData);
     setInputValue('');
   };
 

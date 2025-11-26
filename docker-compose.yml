@@ -90,7 +90,7 @@ services:
       - "8003:8003"
     environment:
       - PYTHONUNBUFFERED=1
-      - GEMINI_API_KEY=AIzaSyA8uyJ6ztg1oYUmqEA6RIRpMhUYmwAp3vA
+      - GEMINI_API_KEY=AIzaSyAHQIhI4EVLQ24Fe-5EsbQkdqD-xNVmunc
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - RAG_COLLECTION_NAME=corn-stress-knowledge

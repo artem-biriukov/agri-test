@@ -20,7 +20,7 @@ import os
 app = FastAPI(
     title="AgriGuard API Orchestrator",
     description="Unified API for AgriGuard agricultural intelligence platform",
-    version="1.2.0"
+    version="1.3.0"
 )
 
 app.add_middleware(
@@ -49,11 +49,24 @@ RAG_URL_LOCAL = "http://localhost:8003"
 # Pydantic Models
 # ─────────────────────────────────────────────────────────────────────────────
 
+class StressData(BaseModel):
+    """Pre-computed stress indices from frontend."""
+    overall_stress: Optional[float] = None
+    water_stress: Optional[float] = None
+    heat_stress: Optional[float] = None
+    vegetation_health: Optional[float] = None
+    atmospheric_stress: Optional[float] = None
+    predicted_yield: Optional[float] = None
+    yield_uncertainty: Optional[float] = None
+
+
 class ChatRequest(BaseModel):
     """Request model for /chat endpoint."""
     message: str = Field(..., description="User's question")
     fips: Optional[str] = Field(default=None, description="County FIPS code for live data")
+    week: Optional[int] = Field(default=None, description="Week of season for data lookup")
     include_live_data: bool = Field(default=True, description="Include live MCSI/yield data")
+    stress_data: Optional[StressData] = Field(default=None, description="Pre-computed stress indices from frontend")
 
 
 class ChatResponse(BaseModel):
@@ -154,17 +167,39 @@ async def get_mcsi_timeseries(
 
 
 @app.get("/mcsi/{fips}")
-async def get_mcsi(fips: str):
-    """Get latest MCSI for a county."""
+async def get_mcsi(fips: str, week: Optional[int] = None):
+    """Get MCSI for a county, optionally for a specific week."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await try_request(
-                client,
-                f"{MCSI_URL}/mcsi/county/{fips}",
-                f"{MCSI_URL_LOCAL}/mcsi/county/{fips}"
-            )
-            response.raise_for_status()
-            return response.json()
+            # If week specified, get timeseries and filter
+            if week:
+                response = await try_request(
+                    client,
+                    f"{MCSI_URL}/mcsi/county/{fips}/timeseries?limit=30",
+                    f"{MCSI_URL_LOCAL}/mcsi/county/{fips}/timeseries?limit=30"
+                )
+                response.raise_for_status()
+                timeseries = response.json()
+                
+                if isinstance(timeseries, list):
+                    # Find the data for the specific week
+                    for item in timeseries:
+                        if item.get("week_of_season") == week:
+                            return item
+                    # If week not found, return closest available
+                    if timeseries:
+                        return min(timeseries, 
+                                   key=lambda x: abs(x.get("week_of_season", 0) - week))
+                return timeseries
+            else:
+                # Get latest
+                response = await try_request(
+                    client,
+                    f"{MCSI_URL}/mcsi/county/{fips}",
+                    f"{MCSI_URL_LOCAL}/mcsi/county/{fips}"
+                )
+                response.raise_for_status()
+                return response.json()
             
     except Exception as e:
         logger.error(f"MCSI error: {e}")
@@ -261,63 +296,177 @@ async def chat(request: ChatRequest):
     Chat with AgriBot - AI assistant for agricultural recommendations.
     
     Enriches queries with live MCSI and yield data when a FIPS code is provided.
+    Uses the specified week for data lookup if provided.
     """
-    logger.info(f"Chat request: '{request.message[:50]}...' fips={request.fips}")
+    logger.info(f"Chat request: '{request.message[:50]}...' fips={request.fips} week={request.week}")
     
     mcsi_context = None
     yield_context = None
     county_name = None
+    timeseries = None
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Fetch live data if FIPS provided
         if request.fips and request.include_live_data:
-            # Get latest MCSI
+            # Get MCSI for the specific week (or latest if no week specified)
             try:
-                mcsi_response = await try_request(
-                    client,
-                    f"{MCSI_URL}/mcsi/county/{request.fips}",
-                    f"{MCSI_URL_LOCAL}/mcsi/county/{request.fips}"
-                )
+                mcsi_url = f"{MCSI_URL}/mcsi/county/{request.fips}/timeseries?limit=30"
+                mcsi_url_local = f"{MCSI_URL_LOCAL}/mcsi/county/{request.fips}/timeseries?limit=30"
+                
+                mcsi_response = await try_request(client, mcsi_url, mcsi_url_local)
+                
                 if mcsi_response.status_code == 200:
-                    mcsi_data = mcsi_response.json()
-                    county_name = mcsi_data.get("county_name", request.fips)
+                    timeseries = mcsi_response.json()
                     
-                    # Format for RAG service
-                    mcsi_context = {
-                        "fips": request.fips,
-                        "county_name": county_name,
-                        "date": mcsi_data.get("date"),
-                        "week_of_season": mcsi_data.get("week_of_season"),
-                        "mcsi": mcsi_data.get("stress_index"),
-                        "stress_level": mcsi_data.get("stress_level"),
-                        "ndvi_index": mcsi_data.get("indicators", {}).get("ndvi_mean"),
-                        "lst_index": mcsi_data.get("indicators", {}).get("lst_mean"),
-                        "vpd_index": mcsi_data.get("indicators", {}).get("vpd_mean"),
-                        "water_index": mcsi_data.get("indicators", {}).get("water_deficit_mean"),
-                    }
-                    logger.info(f"Got MCSI context for {county_name}")
+                    if isinstance(timeseries, list) and timeseries:
+                        # Find data for the specific week or use latest
+                        target_week = request.week
+                        mcsi_data = None
+                        
+                        if target_week:
+                            # Find exact week or closest
+                            for item in timeseries:
+                                if item.get("week_of_season") == target_week:
+                                    mcsi_data = item
+                                    break
+                            if not mcsi_data:
+                                # Get closest week
+                                mcsi_data = min(timeseries, 
+                                               key=lambda x: abs(x.get("week_of_season", 0) - target_week))
+                        else:
+                            # Get latest (highest week)
+                            mcsi_data = max(timeseries, key=lambda x: x.get("week_of_season", 0))
+                        
+                        county_name = mcsi_data.get("county_name", request.fips)
+                        
+                        # Format for RAG service - use frontend stress values if available
+                        mcsi_context = {
+                            "fips": request.fips,
+                            "county_name": county_name,
+                            "date": mcsi_data.get("date"),
+                            "week_of_season": mcsi_data.get("week_of_season"),
+                            # Use frontend stress indices if provided, otherwise use raw values
+                            "overall_stress": request.stress_data.overall_stress if request.stress_data else None,
+                            "water_stress": request.stress_data.water_stress if request.stress_data else None,
+                            "heat_stress": request.stress_data.heat_stress if request.stress_data else None,
+                            "vegetation_health": request.stress_data.vegetation_health if request.stress_data else None,
+                            "atmospheric_stress": request.stress_data.atmospheric_stress if request.stress_data else None,
+                            # Also include raw values for reference
+                            "ndvi_raw": mcsi_data.get("indicators", {}).get("ndvi_mean"),
+                            "lst_raw": mcsi_data.get("indicators", {}).get("lst_mean"),
+                            "vpd_raw": mcsi_data.get("indicators", {}).get("vpd_mean"),
+                            "water_raw": mcsi_data.get("indicators", {}).get("water_deficit_mean"),
+                        }
+                        logger.info(f"Got MCSI context for {county_name} week {mcsi_context.get('week_of_season')}")
+                    elif not isinstance(timeseries, list):
+                        # Single item returned
+                        mcsi_data = timeseries
+                        county_name = mcsi_data.get("county_name", request.fips)
+                        mcsi_context = {
+                            "fips": request.fips,
+                            "county_name": county_name,
+                            "date": mcsi_data.get("date"),
+                            "week_of_season": mcsi_data.get("week_of_season"),
+                            # Use frontend stress indices if provided
+                            "overall_stress": request.stress_data.overall_stress if request.stress_data else None,
+                            "water_stress": request.stress_data.water_stress if request.stress_data else None,
+                            "heat_stress": request.stress_data.heat_stress if request.stress_data else None,
+                            "vegetation_health": request.stress_data.vegetation_health if request.stress_data else None,
+                            "atmospheric_stress": request.stress_data.atmospheric_stress if request.stress_data else None,
+                            # Also include raw values
+                            "ndvi_raw": mcsi_data.get("indicators", {}).get("ndvi_mean"),
+                            "lst_raw": mcsi_data.get("indicators", {}).get("lst_mean"),
+                            "vpd_raw": mcsi_data.get("indicators", {}).get("vpd_mean"),
+                            "water_raw": mcsi_data.get("indicators", {}).get("water_deficit_mean"),
+                        }
+                        logger.info(f"Got MCSI context for {county_name}")
             except Exception as e:
                 logger.warning(f"Failed to fetch MCSI: {e}")
             
-            # Get yield forecast
+            # If mcsi_context wasn't created from backend but we have frontend stress_data, use that
+            if mcsi_context is None and request.stress_data:
+                mcsi_context = {
+                    "fips": request.fips,
+                    "county_name": county_name or request.fips,
+                    "week_of_season": request.week,
+                    "overall_stress": request.stress_data.overall_stress,
+                    "water_stress": request.stress_data.water_stress,
+                    "heat_stress": request.stress_data.heat_stress,
+                    "vegetation_health": request.stress_data.vegetation_health,
+                    "atmospheric_stress": request.stress_data.atmospheric_stress,
+                }
+                logger.info(f"Using frontend stress_data for context")
+            
+            # Get yield forecast for the specific week
             try:
-                yield_response = await client.get(
-                    f"http://localhost:8002/yield/{request.fips}",  # Call self
-                    timeout=20.0
-                )
-                if yield_response.status_code == 200:
-                    yield_data = yield_response.json()
-                    yield_context = {
+                # We already have timeseries data, build yield request directly
+                if isinstance(timeseries, list) and timeseries:
+                    current_week = request.week if request.week else max(
+                        item.get("week_of_season", 0) for item in timeseries
+                    )
+                    filtered = [
+                        item for item in timeseries 
+                        if item.get("week_of_season", 0) <= current_week
+                    ]
+                    
+                    # Build raw_data for yield model
+                    raw_data = {}
+                    for item in filtered:
+                        w = item.get("week_of_season", 0)
+                        indicators = item.get("indicators", {})
+                        raw_data[str(w)] = {
+                            "water_deficit_mean": indicators.get("water_deficit_mean", 0),
+                            "lst_days_above_32C": int(indicators.get("lst_mean", 0)),
+                            "ndvi_mean": indicators.get("ndvi_mean", 0.5),
+                            "vpd_mean": indicators.get("vpd_mean", 0),
+                            "pr_sum": indicators.get("precipitation_mean", 0)
+                        }
+                    
+                    # Call yield service directly
+                    yield_req = {
                         "fips": request.fips,
-                        "county_name": county_name or request.fips,
-                        "predicted_yield": yield_data.get("predicted_yield"),
-                        "confidence_lower": yield_data.get("confidence_lower"),
-                        "confidence_upper": yield_data.get("confidence_upper"),
-                        "primary_driver": yield_data.get("primary_driver"),
+                        "current_week": current_week,
+                        "year": 2025,
+                        "raw_data": raw_data
                     }
-                    logger.info(f"Got yield context")
+                    
+                    yield_response = await try_request(
+                        client,
+                        f"{YIELD_URL}/forecast",
+                        f"{YIELD_URL_LOCAL}/forecast",
+                        method="POST",
+                        json=yield_req,
+                        timeout=15.0
+                    )
+                    
+                    if yield_response.status_code == 200:
+                        ydata = yield_response.json()
+                        # Use frontend yield values if provided, otherwise use backend values
+                        yield_context = {
+                            "fips": request.fips,
+                            "county_name": county_name or request.fips,
+                            "week": current_week,
+                            "predicted_yield": request.stress_data.predicted_yield if request.stress_data and request.stress_data.predicted_yield else ydata.get("yield_forecast_bu_acre"),
+                            "yield_uncertainty": request.stress_data.yield_uncertainty if request.stress_data and request.stress_data.yield_uncertainty else ydata.get("forecast_uncertainty"),
+                            "confidence_lower": ydata.get("confidence_interval_lower"),
+                            "confidence_upper": ydata.get("confidence_interval_upper"),
+                            "primary_driver": ydata.get("primary_driver"),
+                            "model_r2": ydata.get("model_r2"),
+                        }
+                        logger.info(f"Got yield context for week {current_week}: {yield_context.get('predicted_yield')} bu/acre")
             except Exception as e:
                 logger.warning(f"Failed to fetch yield: {e}")
+            
+            # If yield_context wasn't created from backend but we have frontend data, use that
+            if yield_context is None and request.stress_data and request.stress_data.predicted_yield:
+                yield_context = {
+                    "fips": request.fips,
+                    "county_name": county_name or request.fips,
+                    "week": request.week,
+                    "predicted_yield": request.stress_data.predicted_yield,
+                    "yield_uncertainty": request.stress_data.yield_uncertainty,
+                }
+                logger.info(f"Using frontend yield data: {yield_context.get('predicted_yield')} bu/acre")
         
         # Call RAG service
         try:
