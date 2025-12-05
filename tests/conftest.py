@@ -17,15 +17,9 @@ sys.path.insert(0, str(project_root))
 # Test configuration
 def pytest_configure(config):
     """Configure pytest with custom markers"""
-    config.addinivalue_line(
-        "markers", "unit: mark test as a unit test"
-    )
-    config.addinivalue_line(
-        "markers", "integration: mark test as an integration test"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
+    config.addinivalue_line("markers", "unit: mark test as a unit test")
+    config.addinivalue_line("markers", "integration: mark test as an integration test")
+    config.addinivalue_line("markers", "slow: mark test as slow running")
 
 
 # Shared fixtures
@@ -63,10 +57,7 @@ def mock_environment_variables(monkeypatch):
 @pytest.fixture
 def sample_ndvi_timeseries():
     """Fixture providing sample NDVI timeseries"""
-    return {
-        "dates": ["2024-05-01", "2024-05-17", "2024-06-02"],
-        "values": [0.45, 0.68, 0.82]
-    }
+    return {"dates": ["2024-05-01", "2024-05-17", "2024-06-02"], "values": [0.45, 0.68, 0.82]}
 
 
 @pytest.fixture
@@ -81,7 +72,7 @@ def sample_mcsi_response():
         "heat_stress": 40.0,
         "vegetation_health": 35.0,
         "atmospheric_stress": 30.0,
-        "timestamp": "2024-07-15T12:00:00Z"
+        "timestamp": "2024-07-15T12:00:00Z",
     }
 
 
@@ -96,17 +87,14 @@ def sample_yield_response():
         "uncertainty": 12.5,
         "confidence_interval_lower": 172.8,
         "confidence_interval_upper": 197.8,
-        "model_version": "xgboost_v1.0"
+        "model_version": "xgboost_v1.0",
     }
 
 
 @pytest.fixture
 def sample_rag_query():
     """Fixture providing sample RAG query"""
-    return {
-        "query": "What is NDVI and how do I interpret it?",
-        "top_k": 5
-    }
+    return {"query": "What is NDVI and how do I interpret it?", "top_k": 5}
 
 
 @pytest.fixture
@@ -117,13 +105,9 @@ def sample_rag_response():
             {
                 "text": "NDVI is the Normalized Difference Vegetation Index...",
                 "distance": 0.12,
-                "source": "MCSI-Interpretation-Guide.pdf"
+                "source": "MCSI-Interpretation-Guide.pdf",
             },
-            {
-                "text": "NDVI values range from 0 to 1...",
-                "distance": 0.18,
-                "source": "MCSI-Interpretation-Guide.pdf"
-            }
+            {"text": "NDVI values range from 0 to 1...", "distance": 0.18, "source": "MCSI-Interpretation-Guide.pdf"},
         ]
     }
 
@@ -131,11 +115,7 @@ def sample_rag_response():
 @pytest.fixture
 def sample_chat_request():
     """Fixture providing sample chat request"""
-    return {
-        "message": "How is my corn doing this week?",
-        "fips": "19153",
-        "include_live_data": True
-    }
+    return {"message": "How is my corn doing this week?", "fips": "19153", "include_live_data": True}
 
 
 @pytest.fixture
@@ -146,19 +126,14 @@ def sample_chat_response():
         "sources_used": 5,
         "has_live_data": True,
         "county": "Polk County",
-        "timestamp": "2024-07-15T12:00:00Z"
+        "timestamp": "2024-07-15T12:00:00Z",
     }
 
 
 # Pytest options
 def pytest_addoption(parser):
     """Add custom command line options"""
-    parser.addoption(
-        "--run-slow",
-        action="store_true",
-        default=False,
-        help="run slow tests"
-    )
+    parser.addoption("--run-slow", action="store_true", default=False, help="run slow tests")
 
 
 def pytest_collection_modifyitems(config, items):

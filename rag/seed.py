@@ -2,7 +2,7 @@ import os, sys, logging, uuid, requests, time
 from pathlib import Path
 from PyPDF2 import PdfReader
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 URL = "http://chromadb:8000/api/v2"
@@ -15,7 +15,8 @@ for attempt in range(10):
         if requests.get(f"{URL}/heartbeat", timeout=5).status_code == 200:
             logger.info("✓ ChromaDB ready")
             break
-    except: pass
+    except:
+        pass
     if attempt < 9:
         logger.info(f"Waiting... ({attempt+1}/10)")
         time.sleep(2)
@@ -34,7 +35,7 @@ for pdf in pdfs:
         text = page[1].extract_text()
         if text.strip():
             for j in range(0, len(text), 900):
-                chunk = text[j:j+1000]
+                chunk = text[j : j + 1000]
                 if len(chunk.strip()) > 100:
                     docs.append(chunk)
                     ids.append(str(uuid.uuid4()))
@@ -48,10 +49,15 @@ if not docs:
 logger.info(f"💾 {len(docs)} chunks")
 try:
     requests.post(f"{URL}/collections", json={"name": COLLECTION, "metadata": {"hnsw:space": "cosine"}}, timeout=10)
-except: pass
+except:
+    pass
 
 for i in range(0, len(docs), 50):
     logger.info(f"  Batch {i//50 + 1}...")
-    requests.post(f"{URL}/collections/{COLLECTION}/add", json={"ids": ids[i:i+50], "documents": docs[i:i+50], "metadatas": metas[i:i+50]}, timeout=30)
+    requests.post(
+        f"{URL}/collections/{COLLECTION}/add",
+        json={"ids": ids[i : i + 50], "documents": docs[i : i + 50], "metadatas": metas[i : i + 50]},
+        timeout=30,
+    )
 
 logger.info("✓ Done!")

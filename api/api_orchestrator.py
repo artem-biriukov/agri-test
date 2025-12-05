@@ -6,7 +6,9 @@ import logging
 
 app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0")
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ MCSI_URL = "http://mcsi:8000"
 YIELD_URL = "http://yield:8001"
 MCSI_URL_LOCAL = "http://localhost:8000"
 YIELD_URL_LOCAL = "http://localhost:8001"
+
 
 @app.get("/health")
 async def health_check():
@@ -40,12 +43,21 @@ async def health_check():
                     yield_health = r.status_code == 200
                 except:
                     pass
-        return {"status": "healthy" if mcsi_health and yield_health else "degraded", "services": {"mcsi": "healthy" if mcsi_health else "unhealthy", "yield": "healthy" if yield_health else "unhealthy"}}
+        return {
+            "status": "healthy" if mcsi_health and yield_health else "degraded",
+            "services": {
+                "mcsi": "healthy" if mcsi_health else "unhealthy",
+                "yield": "healthy" if yield_health else "unhealthy",
+            },
+        }
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
+
 @app.get("/mcsi/{fips}/timeseries")
-async def get_mcsi_timeseries(fips: str, start_date: Optional[str] = None, end_date: Optional[str] = None, limit: Optional[int] = 30):
+async def get_mcsi_timeseries(
+    fips: str, start_date: Optional[str] = None, end_date: Optional[str] = None, limit: Optional[int] = 30
+):
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             url = f"{MCSI_URL}/mcsi/county/{fips}/timeseries?limit={limit}"
@@ -68,6 +80,7 @@ async def get_mcsi_timeseries(fips: str, start_date: Optional[str] = None, end_d
         logger.error(f"MCSI error: {e}")
         raise HTTPException(status_code=503, detail="MCSI unavailable")
 
+
 @app.get("/mcsi/{fips}")
 async def get_mcsi(fips: str):
     try:
@@ -81,6 +94,7 @@ async def get_mcsi(fips: str):
     except Exception as e:
         raise HTTPException(status_code=503, detail="MCSI unavailable")
 
+
 @app.get("/yield/{fips}")
 async def get_yield_forecast(fips: str, week: Optional[int] = None):
     try:
@@ -93,10 +107,10 @@ async def get_yield_forecast(fips: str, week: Optional[int] = None):
             timeseries = ts_res.json()
             if not isinstance(timeseries, list):
                 timeseries = [timeseries]
-            
+
             current_week = week if week else max(item.get("week_of_season", 0) for item in timeseries)
             filtered = [item for item in timeseries if item.get("week_of_season", 0) <= current_week]
-            
+
             raw_data = {}
             for item in filtered:
                 w = item.get("week_of_season", 0)
@@ -106,19 +120,19 @@ async def get_yield_forecast(fips: str, week: Optional[int] = None):
                     "lst_days_above_32C": int(indicators.get("lst_mean", 0)),
                     "ndvi_mean": indicators.get("ndvi_mean", 0.5),
                     "vpd_mean": indicators.get("vpd_mean", 0),
-                    "pr_sum": indicators.get("precipitation_mean", 0)
+                    "pr_sum": indicators.get("precipitation_mean", 0),
                 }
-            
+
             yield_req = {"fips": fips, "current_week": current_week, "year": 2025, "raw_data": raw_data}
             logger.info(f"Yield forecast {fips} week {current_week}")
-            
+
             try:
                 yres = await client.post(f"{YIELD_URL}/forecast", json=yield_req, timeout=15.0)
             except:
                 yres = await client.post(f"{YIELD_URL_LOCAL}/forecast", json=yield_req, timeout=15.0)
             yres.raise_for_status()
             ydata = yres.json()
-            
+
             return {
                 "fips": fips,
                 "week": current_week,
@@ -133,6 +147,8 @@ async def get_yield_forecast(fips: str, week: Optional[int] = None):
         logger.error(f"Yield error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8002)
