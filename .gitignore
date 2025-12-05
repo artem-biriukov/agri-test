@@ -5,3 +5,17 @@
 # DVC cache
 .dvc/cache/
 secrets/
+
+# Test artifacts
+coverage.xml
+.coverage
+htmlcov/
+
+# Service account keys
+*-key.json
+*.json.key
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
