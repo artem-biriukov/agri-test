@@ -61,15 +61,15 @@ class TestMCSICalculation:
 
         # Calculate stress index
         if deficit < 0:
-            _ = 0
+            stress = 0
         elif deficit < 2:
-            _ = 20
+            stress = 20
         elif deficit <= 4:  # FIXED: Changed < 4 to <= 4
-            _ = 50
+            stress = 50
         elif deficit < 6:
-            _ = 75
+            stress = 75
         else:
-            _ = 100
+            stress = 100
 
         assert deficit == 4.0
         assert stress == 50  # Now this matches!
@@ -80,9 +80,9 @@ class TestMCSICalculation:
         threshold_high = 32.0
 
         if lst_mean > threshold_high:
-            _ = min(100, (lst_mean - threshold_high) * 20)
+            stress = min(100, (lst_mean - threshold_high) * 20)
         else:
-            _ = 0
+            stress = 0
 
         assert stress > 0
 
@@ -94,15 +94,15 @@ class TestMCSICalculation:
         health_ratio = ndvi_current / ndvi_historical
 
         if health_ratio > 1.0:
-            _ = 0
+            stress = 0
         elif health_ratio > 0.9:
-            _ = 20
+            stress = 20
         elif health_ratio > 0.8:
-            _ = 50
+            stress = 50
         elif health_ratio > 0.7:
-            _ = 75
+            stress = 75
         else:
-            _ = 100
+            stress = 100
 
         # FIXED: Use pytest.approx for floating point comparison
         assert health_ratio == pytest.approx(0.9, rel=0.01)
