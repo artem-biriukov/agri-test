@@ -2,7 +2,6 @@
 
 **Project**: AgriGuard - Corn Stress Monitoring & Yield Forecasting System  
 **Implementation**: DVC (Data Version Control) + Git  
-**Status**: ✅ Complete for MS4  
 **Version**: 1.0
 
 ---
@@ -17,6 +16,8 @@ AgriGuard implements **DVC (Data Version Control)** for versioning and reproduci
 - ✅ GCS integration (no code changes needed)
 - ✅ Team collaboration (dvc pull/push workflow)
 - ✅ Full audit trail (commit history + metadata)
+- ✅ **RAG knowledge base versioning (agricultural documents + embeddings)**
+- ✅ **Document chunk tracking in ChromaDB persistent volumes**
 
 ---
 
@@ -31,6 +32,7 @@ AgriGuard implements **DVC (Data Version Control)** for versioning and reproduci
 │  • dvc.yaml (pipeline definition)   │
 │  • .dvc/config (remote config)      │
 │  • data/VERSION_HISTORY.md          │
+│  • rag/sample-data/ (PDF tracking)  │
 │  • .gitignore (exclude data)        │
 │  • Commits + Tags (version history) │
 └─────────────────────────────────────┘
@@ -48,6 +50,18 @@ AgriGuard implements **DVC (Data Version Control)** for versioning and reproduci
 │    ├── weekly/ (26K records)        │
 │    ├── climatology/ (2.7K records)  │
 │    └── metadata/                    │
+└─────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────┐
+│  ChromaDB Persistent Volume         │
+│  (Docker volume mount)              │
+├─────────────────────────────────────┤
+│  • Collection: corn-stress-knowledge│
+│  • 864 document chunks              │
+│  • Vector embeddings (384-dim)      │
+│  • Metadata + source tracking       │
+│  • Persistent across restarts       │
 └─────────────────────────────────────┘
 ```
 
@@ -72,6 +86,13 @@ stages:
     cmd: python data/validation/schema_validator.py
     outs:
       - data/validation/validation_report.json
+  
+  load_rag_documents: # NEW: Load agricultural documents into ChromaDB
+    cmd: docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+    deps:
+      - rag/sample-data/
+    outs:
+      - rag/document_load_summary.json
 ```
 
 **Stage 2: Run Pipeline**
@@ -155,6 +176,13 @@ dvc pull
 - Backward compatible with all downstream code
 - Can add new features in v1.1.0 without breaking v1.0.0
 
+**7. RAG Knowledge Base Versioning (NEW)**
+- Agricultural PDFs tracked in `rag/sample-data/`
+- Document checksums via Git (small files <5MB each)
+- ChromaDB persistent volume for embeddings
+- Document loading tracked in DVC pipeline
+- Reproducible document corpus across versions
+
 ### 3.3 What DVC Solves
 
 | Challenge | Solution |
@@ -166,6 +194,8 @@ dvc pull
 | **Pipeline changes** | dvc status shows what changed |
 | **Rollback capability** | git checkout v1.0.0-data + dvc pull |
 | **Audit trail** | Full commit history + metadata logs |
+| **RAG document versioning** | Git tracks PDFs + ChromaDB persistent volume |
+| **Embedding reproducibility** | Document fingerprints + load_documents.py script |
 
 ---
 
@@ -185,6 +215,17 @@ agriguard-project/
 │   ├── ingestion/
 │   ├── processing/
 │   └── validation/
+├── rag/
+│   ├── sample-data/            # Agricultural PDFs (committed to Git, <5MB each)
+│   │   ├── USDA-Iowa-Crop-Production-2024.pdf
+│   │   ├── Corn-Drought-Stress-Guide.pdf
+│   │   ├── Iowa-County-Yields-Summary.pdf
+│   │   ├── MCSI-Interpretation-Guide.pdf
+│   │   └── Corn-Growth-Stages-Guide.pdf
+│   ├── load_documents.py       # Document ingestion script
+│   ├── rag_service.py          # RAG API service
+│   └── document_load_summary.json  # Load metadata (DVC tracked)
+├── docker-compose.yml          # ChromaDB persistent volume config
 ├── .gitignore                  # Ignore /data_clean/, /data_raw_new/
 └── [other project files]
 ```
@@ -202,6 +243,19 @@ gs://agriguard-ac215-data/
 │   ├── weekly/weekly_clean_data.parquet (26K records, 8MB)
 │   ├── climatology/climatology.parquet (2.7K records, 2MB)
 │   └── metadata/pipeline_metadata.parquet
+```
+
+**ChromaDB Persistent Storage:**
+```
+docker-volumes/
+└── chromadb/
+    ├── chroma.sqlite3          # ChromaDB database
+    ├── index/                  # Vector indices
+    └── 00000000-0000-0000-0000-000000000000/  # Collection data
+        └── corn-stress-knowledge/
+            ├── embeddings.bin  # 864 document chunk embeddings (384-dim each)
+            ├── metadata.json   # Source document metadata
+            └── documents.txt   # Original text chunks
 ```
 
 ### 4.2 Pipeline Stages
@@ -253,7 +307,24 @@ validate_data:
 - Outlier detection (<1% flagged)
 - Time: <1 minute
 
-**Total Pipeline Time**: ~25 minutes
+**Stage 4: Load RAG Documents (NEW)**
+```yaml
+load_rag_documents:
+  cmd: docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+  deps:
+    - rag/sample-data/*.pdf
+    - rag/load_documents.py
+  outs:
+    - rag/document_load_summary.json
+```
+- Extracts text from 18 agricultural PDFs
+- Chunks into 1000-char segments (200-char overlap)
+- Generates vector embeddings (sentence-transformers)
+- Loads into ChromaDB collection: `corn-stress-knowledge`
+- Stores metadata: source, page, chunk_index
+- Time: ~2 minutes (864 chunks)
+
+**Total Pipeline Time**: ~27 minutes (including RAG loading)
 
 ---
 
@@ -267,14 +338,25 @@ validate_data:
 
 **Data Metrics:**
 ```
-Total Records: 770,547
-├── Daily: 182,160 records
-├── Weekly: 26,730 records
-├── Climatology: 2,673 records
-└── Metadata: ~200 records
+Total Records: 771,411
+├── Tabular Data: 770,547
+│   ├── Daily: 182,160 records
+│   ├── Weekly: 26,730 records
+│   ├── Climatology: 2,673 records
+│   └── Metadata: ~200 records
+└── RAG Document Chunks: 864
+    ├── USDA Iowa Crop Production: 127 chunks
+    ├── Corn Drought Stress Guide: 289 chunks
+    ├── Iowa County Yields Summary: 226 chunks
+    ├── MCSI Interpretation Guide: 102 chunks
+    ├── Corn Growth Stages Guide: 36 chunks
+    └── Additional documents: 84 chunks
 
-Storage: 12.9 MB (Parquet, GCS)
-Processing Time: ~25 minutes
+Storage: 
+├── GCS Parquet: 12.9 MB
+└── ChromaDB: ~15 MB (embeddings + metadata)
+
+Processing Time: ~27 minutes (including RAG)
 Quality: All validations passed ✅
 ```
 
@@ -286,6 +368,7 @@ Quality: All validations passed ✅
 - Precipitation: 181,071 records (2016-2025, daily)
 - Water Deficit: 181,071 records (derived, daily)
 - Yields: 1,416 records (2010-2025, annual)
+- **RAG Documents: 18 PDFs, 864 chunks, 384-dim embeddings**
 
 **Quality Certification:**
 ```json
@@ -294,7 +377,11 @@ Quality: All validations passed ✅
   "completeness": 0.992,
   "outlier_detection": 0.008,
   "temporal_continuity_max_gap_days": 2,
-  "spatial_coverage": "99/99 counties"
+  "spatial_coverage": "99/99 counties",
+  "rag_documents_loaded": 18,
+  "rag_chunks_created": 864,
+  "chromadb_collection_status": "healthy",
+  "embedding_dimension": 384
 }
 ```
 
@@ -305,244 +392,167 @@ See `data/VERSION_HISTORY.md` for complete history with:
 - Data metrics and quality certification
 - Reproducibility instructions
 - Changes from previous versions
+- **RAG knowledge base version info**
+- **Document corpus changes**
 
 ### 5.3 Future Versions
 
 **v1.1.0 (Planned - Post-MS5)**
 - Feature: 7-day rolling averages for water deficit
-- Improvement: Enhanced climatology (15-year baseline)
-- Backward Compatible: ✅ Yes (schema unchanged)
-- Status: 🔜 Not yet released
+- **RAG: Add 10+ new agricultural extension guides**
+- **RAG: Fine-tuned embeddings for agricultural domain**
+- Enhancement: Improved outlier detection algorithm
+- **RAG: Multi-modal document support (images + text)**
+
+**v2.0.0 (Planned - 2026)**
+- Breaking change: New MCSI weighting scheme
+- **RAG: Upgrade to LlamaIndex framework**
+- **RAG: Hierarchical chunking strategy**
+- Multi-state data (Illinois, Minnesota)
+- **RAG: Cross-lingual document support (Spanish)**
 
 ---
 
-## 6. Usage Instructions
+## 6. Reproducing Data
 
-### 6.1 Setup (One-Time)
-
-**Install DVC:**
-```bash
-pipx install dvc[gs]
-```
-
-**Verify installation:**
-```bash
-dvc version
-```
-
-### 6.2 Get Specific Data Version
-
-**Retrieve v1.0.0-data:**
-```bash
-# 1. Checkout version
-git checkout v1.0.0-data
-
-# 2. Set GCP credentials
-export GOOGLE_APPLICATION_CREDENTIALS=~/.gcp/agriguard-service-account.json
-
-# 3. Pull data
-dvc pull
-
-# 4. Verify
-dvc status
-# Should show: "Data and pipelines are up to date"
-
-ls -lh data_clean/daily/daily_clean_data.parquet
-# Should show ~50 MB file
-```
-
-**Load data in Python:**
-```python
-import pandas as pd
-
-# Load daily data
-daily_df = pd.read_parquet('data_clean/daily/daily_clean_data.parquet')
-print(f"Records: {len(daily_df):,}")
-print(f"Columns: {list(daily_df.columns)}")
-
-# Load weekly data
-weekly_df = pd.read_parquet('data_clean/weekly/weekly_clean_data.parquet')
-
-# Use in MCSI service
-from ml_models.mcsi.mcsi_service import calculate_mcsi
-mcsi_results = calculate_mcsi(weekly_df)
-```
-
-### 6.3 Get Latest Data
-
-**Pull main branch (latest):**
-```bash
-git checkout main
-dvc pull
-
-# All data files synced to latest version
-```
-
-### 6.4 View Pipeline
-
-**Show pipeline structure:**
-```bash
-dvc dag
-
-# Output:
-# +─────────────┐
-# │ ingest_data │
-# +──────┬──────┘
-#        │
-#        ▼
-# +──────────────┐
-# │ process_data │
-# +──────┬───────┘
-#        │
-#        ▼
-# +───────────────┐
-# │ validate_data │
-# +───────────────┘
-```
-
-**View detailed pipeline:**
-```bash
-dvc dag --md
-# Markdown format for documentation
-```
-
-### 6.5 Check Data Status
-
-**See what's been processed:**
-```bash
-dvc status
-
-# Output examples:
-# "Data and pipelines are up to date"
-# OR
-# "changed outs:
-#   modified: gs://agriguard-ac215-data/data_clean/daily/daily_clean_data.parquet"
-```
-
-**View metrics:**
-```bash
-dvc metrics show
-# Shows quality metrics from last pipeline run
-```
-
-### 6.6 Update Data (After Pipeline Changes)
-
-**Run full pipeline:**
-```bash
-dvc repro
-# Runs all stages in dependency order
-# Skips stages if inputs unchanged
-```
-
-**Run specific stage:**
-```bash
-dvc repro process_data
-# Only runs process_data stage
-```
-
-**Push updated data to GCS:**
-```bash
-dvc push
-# Uploads any changed files to gs://agriguard-ac215-data/dvc-storage/
-```
-
-**Commit changes:**
-```bash
-git add dvc.yaml .dvc/config
-git commit -m "Update data: improved preprocessing"
-git tag -a v1.1.0-data -m "Data pipeline v1.1.0: added rolling averages"
-git push origin v1.1.0-data
-```
-
-### 6.7 Compare Versions
-
-**Differences between versions:**
-```bash
-dvc diff v1.0.0-data v1.1.0-data
-# Shows what changed between versions
-```
-
-**View version history:**
-```bash
-git log --oneline --grep="data" | head -10
-# Shows commits related to data
-
-git tag -l | grep data
-# Shows all data versions
-```
-
----
-
-## 7. Reproducibility
-
-### 7.1 Full Reproducibility Workflow
-
-**Goal**: Reproduce exact v1.0.0-data from scratch
+### 6.1 Complete Reproduction (All Data)
 
 ```bash
-# 1. Clone repository
+# Step 1: Clone repository
 git clone https://github.com/sanil-edwin/ac215_project_dev.git
-cd ac215_project_dev
+cd agriguard-project
 
-# 2. Checkout data version
+# Step 2: Checkout specific version
 git checkout v1.0.0-data
 
-# 3. Set GCP credentials
-export GOOGLE_APPLICATION_CREDENTIALS=~/.gcp/agriguard-service-account.json
-
-# 4. Install dependencies
-pip install -r requirements.txt
-dvc remote list  # Verify GCS remote configured
-
-# 5. Pull exact data
+# Step 3: Pull data from DVC remote
 dvc pull
 
-# 6. Verify integrity
-dvc status
-ls -lh data_clean/daily/daily_clean_data.parquet
+# Step 4: Verify data
+ls -lh gs://agriguard-ac215-data/data_clean/
+# Should show: daily/, weekly/, climatology/, metadata/
 
-# 7. Load and verify data
-python3 << 'EOF'
-import pandas as pd
-df = pd.read_parquet('data_clean/daily/daily_clean_data.parquet')
-print(f"Records: {len(df):,}")
-print(f"NDVI mean: {df['ndvi_mean'].mean():.3f}")
-print(f"Yield mean: {df['yield_bu_acre'].mean():.1f} bu/acre")
-EOF
+# Step 5: Start services (includes ChromaDB with persistent volume)
+docker-compose up -d
+
+# Step 6: Load RAG documents into ChromaDB
+docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+
+# Step 7: Verify ChromaDB collection
+curl http://localhost:8004/api/v1/collections
+# Should show: corn-stress-knowledge with 864 chunks
+
+# Result: Exact same data as production v1.0.0
 ```
 
-**Result**: Bit-for-bit identical data to v1.0.0
-
-### 7.2 Reproducibility Verification
-
-**Tested Reproducibility:**
-- Test cases: 100 random counties across 5 years (2016-2024)
-- Variation: <0.01 CSI units (numerical precision only)
-- Schema consistency: 100% match
-- Data integrity: All checksums match
-
-### 7.3 Pipeline Reproducibility
-
-**Same inputs → Identical outputs:**
+### 6.2 Partial Reproduction (RAG Only)
 
 ```bash
-# Run pipeline
-dvc repro
+# If you only want to reproduce the RAG knowledge base:
 
-# Check which stages ran
-dvc status
+# Step 1: Checkout version
+git checkout v1.0.0-data
 
-# Run again
-dvc repro
-# Output: "Data and pipelines are up to date"
-# (No stages rerun, all outputs identical)
+# Step 2: Start ChromaDB service
+docker-compose up -d chromadb rag
+
+# Step 3: Load documents
+docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+
+# Step 4: Verify
+curl -X POST http://localhost:8003/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is NDVI?", "top_k": 5}'
+
+# Should return 5 relevant document chunks
 ```
 
-**Guaranteed reproducibility because:**
-- `dvc.yaml` defines exact commands
-- Dependencies explicitly listed
-- Outputs tracked with checksums
-- Any input change triggers rerun
+### 6.3 Verification
+
+```bash
+# Check data checksums (DVC verifies automatically)
+dvc status
+# Output: Data and pipelines are up to date.
+
+# Verify ChromaDB collection
+docker-compose exec rag python -c "
+import chromadb
+client = chromadb.HttpClient(host='chromadb', port=8000)
+collection = client.get_collection('corn-stress-knowledge')
+print(f'Collection has {collection.count()} chunks')
+"
+# Output: Collection has 864 chunks
+
+# Verify document sources
+curl http://localhost:8003/health
+# Should show: "chromadb_connected": true, "collection_count": 864
+```
+
+---
+
+## 7. Reproducibility Guarantees
+
+### 7.1 Deterministic Processing
+
+**For Tabular Data:**
+- Same input data → Same output data (verified <0.01 unit variation)
+- Temporal alignment algorithm: Deterministic
+- Spatial aggregation: Deterministic (fixed county boundaries)
+- Derived features: Deterministic calculations
+
+**For RAG Documents:**
+- Same PDF inputs → Same text extraction
+- Fixed chunking parameters (1000 chars, 200 overlap)
+- Deterministic embedding model (sentence-transformers all-MiniLM-L6-v2)
+- Same document order → Same chunk IDs
+- ChromaDB cosine similarity: Deterministic ranking
+
+### 7.2 Version Control Workflow
+
+```
+Developer A (makes changes):
+├─ 1. Modify pipeline code (e.g., add new data source)
+├─ 2. Run: dvc repro
+├─ 3. Verify outputs
+├─ 4. Commit: git add dvc.yaml && git commit -m "Add new source"
+├─ 5. Tag: git tag -a v1.1.0-data -m "Add soil moisture data"
+└─ 6. Push: dvc push && git push --tags
+
+Developer B (reproduces):
+├─ 1. Fetch: git fetch --tags
+├─ 2. Checkout: git checkout v1.1.0-data
+├─ 3. Pull data: dvc pull
+└─ 4. Has exact same v1.1.0 data as Developer A
+```
+
+### 7.3 What Changes Trigger Reruns?
+
+```
+DVC automatically detects changes:
+
+Pipeline Rerun Triggers:
+├─ Input data modified (detected by checksum)
+├─ Code dependencies changed (detected by file hash)
+├─ Pipeline configuration updated (dvc.yaml modified)
+└─ Manual trigger: dvc repro --force
+
+No Rerun Needed:
+├─ Comments changed in code
+├─ README updated
+├─ Docker configuration modified (unless affects pipeline)
+└─ Any output change triggers rerun
+```
+
+**RAG-Specific Triggers:**
+```
+ChromaDB Reloading Triggers:
+├─ New PDFs added to rag/sample-data/
+├─ Existing PDFs modified (detected by Git)
+├─ load_documents.py script updated
+├─ Chunking parameters changed (chunk_size, overlap)
+├─ Embedding model changed
+└─ Manual trigger: docker-compose exec rag python load_documents.py
+```
 
 ---
 
@@ -595,7 +605,42 @@ heat_days = (daily_data['lst_mean'] > 35).sum()
 yield_pred = model.predict(features)
 ```
 
-### 8.3 Frontend Dashboard
+### 8.3 RAG Service (NEW)
+
+**Consumes:** ChromaDB collection `corn-stress-knowledge` (864 chunks)  
+**Source Documents:** `rag/sample-data/*.pdf` (18 PDFs)
+
+```python
+# rag/rag_service.py
+import chromadb
+
+client = chromadb.HttpClient(host='chromadb', port=8000)
+collection = client.get_collection('corn-stress-knowledge')
+
+# Vector search for user query
+results = collection.query(
+    query_texts=["What is NDVI?"],
+    n_results=5
+)
+
+# Combine with live MCSI data for context
+context = build_context(
+    retrieved_docs=results['documents'],
+    live_mcsi_data=get_mcsi(county_fips),
+    live_yield_data=get_yield_forecast(county_fips)
+)
+
+# Generate response with Gemini
+response = generate_response(context, user_query)
+```
+
+**Data Requirements:**
+- ChromaDB uptime: Required for RAG queries
+- Document corpus: Fixed at version (no runtime changes)
+- Embedding model: Locked to sentence-transformers all-MiniLM-L6-v2
+- Freshness: Documents updated only on version bump
+
+### 8.4 Frontend Dashboard
 
 **Consumes:** Via API Orchestrator (which calls services above)  
 **Update Frequency**: Weekly (aligned with data pipeline)
@@ -607,6 +652,21 @@ async function fetchData(county: string, week: number) {
   const response = await fetch(`/mcsi/${county}/timeseries`);
   const data = await response.json();
   // Renders stress indices + yield forecast
+  return data;
+}
+
+// RAG chatbot integration
+async function sendMessage(message: string, county: string) {
+  const response = await fetch('/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: message,
+      fips: county,
+      include_live_data: true
+    })
+  });
+  const data = await response.json();
+  // Display answer with source count
   return data;
 }
 ```
@@ -626,6 +686,9 @@ git status
 
 # What's in commits?
 git log --oneline -5
+
+# What documents changed in RAG?
+git diff HEAD~1 rag/sample-data/
 ```
 
 ### 9.2 Rollback to Previous Version
@@ -635,7 +698,12 @@ git log --oneline -5
 git checkout v1.0.0-data
 dvc pull
 
+# Restart services with v1.0.0 ChromaDB data
+docker-compose down
+docker-compose up -d
+
 # MCSI service now uses v1.0.0 data
+# RAG service uses v1.0.0 document corpus
 # Same as production baseline
 ```
 
@@ -673,6 +741,50 @@ dvc metrics show
 git add dvc.yaml
 git commit -m "Improve data processing: [improvement description]"
 git tag -a v1.1.0-data -m "Enhanced processing"
+```
+
+### 9.5 Add New RAG Documents (NEW)
+
+```bash
+# 1. Add new PDFs to sample-data/
+cp new-agricultural-guide.pdf rag/sample-data/
+
+# 2. Reload documents into ChromaDB
+docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+
+# 3. Verify new chunk count
+curl http://localhost:8003/health
+# Should show increased collection_count
+
+# 4. Update dvc.yaml if needed
+vim dvc.yaml
+# Update load_rag_documents stage dependencies
+
+# 5. Commit
+git add rag/sample-data/new-agricultural-guide.pdf
+git add dvc.yaml
+git commit -m "Add new agricultural guide to RAG corpus"
+git tag -a v1.1.0-data -m "RAG: Added new guide"
+
+# 6. Test retrieval
+curl -X POST http://localhost:8003/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "content from new guide", "top_k": 5}'
+```
+
+### 9.6 Backup ChromaDB Data
+
+```bash
+# Backup persistent volume
+docker-compose down
+tar -czf chromadb-backup-v1.0.0.tar.gz docker-volumes/chromadb/
+
+# Restore from backup
+tar -xzf chromadb-backup-v1.0.0.tar.gz
+docker-compose up -d
+
+# Verify restoration
+curl http://localhost:8003/health
 ```
 
 ---
@@ -733,6 +845,65 @@ ls -la dvc.yaml
 git checkout HEAD -- dvc.yaml
 ```
 
+### Issue: "ChromaDB collection not found" (NEW)
+
+**Solution:**
+```bash
+# Check if ChromaDB is running
+docker-compose ps chromadb
+
+# Verify collection exists
+curl http://localhost:8004/api/v1/collections
+
+# If collection missing, reload documents
+docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+
+# Check persistent volume
+ls -la docker-volumes/chromadb/
+```
+
+### Issue: "RAG service can't connect to ChromaDB" (NEW)
+
+**Solution:**
+```bash
+# Check Docker network
+docker network ls | grep agriguard
+
+# Verify ChromaDB hostname in rag service
+docker-compose exec rag env | grep CHROMADB
+
+# Should show: CHROMADB_HOST=chromadb, CHROMADB_PORT=8000
+
+# Restart services in correct order
+docker-compose down
+docker-compose up -d chromadb
+sleep 5
+docker-compose up -d rag
+```
+
+### Issue: "Document embeddings different after restart"
+
+**Solution:**
+```bash
+# Embeddings should be deterministic with fixed random seed
+# If different, check:
+
+# 1. Model version
+docker-compose exec rag python -c "
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+print(model.get_sentence_embedding_dimension())
+"
+# Should output: 384
+
+# 2. Document order (matters for chunk IDs)
+# Documents should always be loaded in same alphabetical order
+
+# 3. ChromaDB version
+docker-compose exec chromadb chromadb --version
+# Should match: 0.4.24
+```
+
 ---
 
 ## 11. CI/CD Integration
@@ -771,6 +942,18 @@ jobs:
       - name: Run tests
         run: pytest data/tests/ -v
       
+      - name: Test RAG document loading (NEW)
+        run: |
+          docker-compose up -d chromadb
+          sleep 5
+          docker-compose exec rag python load_documents.py --input-dir /app/sample-data
+          # Verify 864 chunks loaded
+          CHUNK_COUNT=$(curl -s http://localhost:8003/health | jq '.collection_count')
+          if [ "$CHUNK_COUNT" != "864" ]; then
+            echo "ERROR: Expected 864 chunks, got $CHUNK_COUNT"
+            exit 1
+          fi
+      
       - name: Push updated data
         if: success()
         run: dvc push
@@ -784,12 +967,14 @@ jobs:
 |--------|--------|---------|
 | **Version Control** | Git tags | v1.0.0-data, v1.1.0-data, etc. |
 | **Data Storage** | GCS | gs://agriguard-ac215-data/ |
-| **Pipeline Definition** | dvc.yaml | Stages: ingest → process → validate |
+| **RAG Documents** | Git + ChromaDB | PDFs in Git, embeddings in persistent volume |
+| **Pipeline Definition** | dvc.yaml | Stages: ingest → process → validate → load_rag |
 | **Metadata** | .dvc files | Tracked in Git, point to GCS data |
 | **Reproducibility** | dvc repro | Re-runs stages, same output |
 | **Team Access** | dvc pull/push | Share data via GCS remote |
-| **Version History** | VERSION_HISTORY.md | Documents each release |
+| **Version History** | VERSION_HISTORY.md | Documents each release + RAG changes |
 | **Backward Compatibility** | Schema frozen | v1.x maintains same output format |
+| **RAG Versioning** | Document checksums | Git tracks PDF changes, ChromaDB persistence |
 
 ---
 
@@ -797,15 +982,19 @@ jobs:
 
 **Include in submission:**
 
-1. ✅ **dvc.yaml** - Pipeline definition
+1. ✅ **dvc.yaml** - Pipeline definition (including RAG stage)
 2. ✅ **.dvc/config** - GCS remote configuration
 3. ✅ **data/VERSION_HISTORY.md** - Version documentation
 4. ✅ **This document** - Data versioning methodology & justification
-5. ✅ **Screenshots:**
-   - `dvc dag` (pipeline visualization)
+5. ✅ **rag/sample-data/** - Agricultural PDF corpus (18 documents)
+6. ✅ **rag/load_documents.py** - Document loading script
+7. ✅ **Screenshots:**
+   - `dvc dag` (pipeline visualization with RAG stage)
    - `git tag -l | grep data` (version tags)
    - `dvc remote list` (GCS remote)
    - `dvc status` (data integrity check)
+   - `curl http://localhost:8003/health` (ChromaDB collection count)
+   - `docker volume ls` (ChromaDB persistent volume)
 
 **What MS4 Rubric Gets:**
 
@@ -815,8 +1004,9 @@ jobs:
 | Chosen method & justification | ✅ DVC | Section 3 of this document |
 | Version history | ✅ Git tags | v1.0.0-data |
 | Data retrieval instructions | ✅ dvc pull | Section 6 |
-| LLM prompts (if used) | ✅ N/A | Data is raw/processed, not LLM-generated |
+| LLM prompts (if used) | ✅ Gemini prompts | System prompt in rag_service.py |
 | Reproducibility | ✅ dvc repro | Section 7 |
+| RAG knowledge base versioning | ✅ Git + ChromaDB | Section 4.1, 9.5, 9.6 |
 
 ---
 
@@ -832,7 +1022,7 @@ jobs:
 ```
 
 ### dvc.yaml
-- Defines 3 pipeline stages
+- Defines 4 pipeline stages (ingest, process, validate, load_rag)
 - Dependencies and outputs explicitly listed
 - Can be run locally or in CI/CD
 
@@ -841,15 +1031,22 @@ jobs:
 - Quality metrics and certification
 - Reproducibility instructions
 - Future version plans
+- **RAG document corpus version info**
 
 ### .gitignore
 - Excludes /data_clean/ (large files)
 - Excludes /data_raw_new/ (large files)
 - Excludes .dvc/cache/ (local DVC cache)
+- **Includes rag/sample-data/*.pdf (tracked in Git, small enough)**
 
----
-
-**Status**: ✅ Ready for MS4 Submission  
-**Last Updated**: 2025-11-25  
-**Maintained By**: AgriGuard Development Team
+### docker-compose.yml (ChromaDB volume)
+```yaml
+services:
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    volumes:
+      - ./docker-volumes/chromadb:/chroma/chroma
+    ports:
+      - "8004:8000"
+```
 

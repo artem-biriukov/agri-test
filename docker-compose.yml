@@ -72,7 +72,7 @@ services:
       retries: 3
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.4.24
     container_name: agriguard-chromadb
     ports:
       - "8004:8000"
@@ -88,13 +88,14 @@ services:
     container_name: agriguard-rag-service
     ports:
       - "8003:8003"
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - GEMINI_API_KEY=AIzaSyDyBMyJgjj2zkzfBnNRGJOR4T3WZiaEVHI
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - RAG_COLLECTION_NAME=corn-stress-knowledge
-      - GEMINI_MODEL=gemini-2.5-flash
+      - GEMINI_MODEL=gemini-2.0-flash
       - PORT=8003
     volumes:
       - ./rag:/app

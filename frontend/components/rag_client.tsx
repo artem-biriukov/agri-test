@@ -1,6 +1,6 @@
 /**
  * RAG Chat Client Components for AgriGuard
- * Integrates with RAG service for intelligent agricultural chatbot
+ * Integrates with API Orchestrator for intelligent agricultural chatbot
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -10,6 +10,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 // ============================================================================
 
 interface AgriContextData {
+  fips?: string;
   county?: string;
   week?: number;
   year?: number;
@@ -27,30 +28,29 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
-  sources?: Array<{
-    text: string;
-    score: number;
-  }>;
+  sources_used?: number;
+  has_live_data?: boolean;
+  county?: string;
+  mcsi_summary?: string;
+  yield_summary?: string;
 }
 
-interface RAGResponse {
+interface ChatResponse {
   response: string;
-  retrieved_contexts: Array<{
-    text: string;
-    score: number;
-    source?: string;
-  }>;
-  model: string;
-  timestamp: string;
-  context_used: boolean;
+  sources_used: number;
+  has_live_data: boolean;
+  county: string | null;
+  mcsi_summary: string | null;
+  yield_summary: string | null;
 }
 
-interface RAGHealthStatus {
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  chroma_connected: boolean;
-  gemini_configured: boolean;
-  collection_count: number;
-  timestamp: string;
+interface HealthStatus {
+  status: string;
+  services: {
+    mcsi: string;
+    yield: string;
+    rag: string;
+  };
 }
 
 // ============================================================================
@@ -58,20 +58,30 @@ interface RAGHealthStatus {
 // ============================================================================
 
 /**
- * Hook for RAG chat functionality
+ * Hook for RAG chat functionality via API Orchestrator
  */
-const useRAGChat = (ragServiceUrl: string) => {
+const useRAGChat = (apiUrl: string) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sendMessage = useCallback(
     async (
-      query: string,
-      agriContext?: AgriContextData,
-      includeContext = true
+      message: string,
+      fips?: string,
+      week?: number,
+      includeLiveData = true,
+      stressData?: {
+        overall_stress?: number;
+        water_stress?: number;
+        heat_stress?: number;
+        vegetation_health?: number;
+        atmospheric_stress?: number;
+        predicted_yield?: number;
+        yield_uncertainty?: number;
+      }
     ): Promise<void> => {
-      if (!query.trim()) return;
+      if (!message.trim()) return;
 
       setLoading(true);
       setError(null);
@@ -80,48 +90,52 @@ const useRAGChat = (ragServiceUrl: string) => {
         // Add user message to history
         const userMessage: ChatMessage = {
           role: 'user',
-          content: query,
+          content: message,
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, userMessage]);
 
-        // Call RAG service
-        const response = await fetch(`${ragServiceUrl}/chat`, {
+        // Call API Orchestrator /chat endpoint
+        const response = await fetch(`${apiUrl}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            query,
-            county: agriContext?.county,
-            week: agriContext?.week,
-            year: agriContext?.year,
-            include_context: includeContext,
-            agri_context: agriContext,
+            message,
+            fips: fips || null,
+            week: week || null,
+            include_live_data: includeLiveData,
+            stress_data: stressData || null,
           }),
         });
 
         if (!response.ok) {
-          throw new Error(`RAG API error: ${response.status}`);
+          const errorText = await response.text();
+          throw new Error(`API error: ${response.status} - ${errorText}`);
         }
 
-        const data: RAGResponse = await response.json();
+        const data: ChatResponse = await response.json();
 
         // Add assistant message to history
         const assistantMessage: ChatMessage = {
           role: 'assistant',
           content: data.response,
-          timestamp: data.timestamp,
-          sources: data.retrieved_contexts,
+          timestamp: new Date().toISOString(),
+          sources_used: data.sources_used,
+          has_live_data: data.has_live_data,
+          county: data.county || undefined,
+          mcsi_summary: data.mcsi_summary || undefined,
+          yield_summary: data.yield_summary || undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Unknown error';
         setError(errorMsg);
-        console.error('RAG chat error:', err);
+        console.error('Chat error:', err);
       } finally {
         setLoading(false);
       }
     },
-    [ragServiceUrl]
+    [apiUrl]
   );
 
   const clearMessages = useCallback(() => {
@@ -139,18 +153,18 @@ const useRAGChat = (ragServiceUrl: string) => {
 };
 
 /**
- * Hook for RAG health checks
+ * Hook for health checks via API Orchestrator
  */
-const useRAGHealth = (ragServiceUrl: string, interval = 30000) => {
-  const [health, setHealth] = useState<RAGHealthStatus | null>(null);
+const useRAGHealth = (apiUrl: string, interval = 30000) => {
+  const [health, setHealth] = useState<HealthStatus | null>(null);
   const [isHealthy, setIsHealthy] = useState(false);
 
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await fetch(`${ragServiceUrl}/health`);
+        const response = await fetch(`${apiUrl}/health`);
         if (response.ok) {
-          const data: RAGHealthStatus = await response.json();
+          const data: HealthStatus = await response.json();
           setHealth(data);
           setIsHealthy(data.status === 'healthy');
         }
@@ -163,50 +177,52 @@ const useRAGHealth = (ragServiceUrl: string, interval = 30000) => {
     checkHealth();
     const timer = setInterval(checkHealth, interval);
     return () => clearInterval(timer);
-  }, [ragServiceUrl, interval]);
+  }, [apiUrl, interval]);
 
   return { health, isHealthy };
 };
 
 /**
- * Hook for retrieval endpoint (testing/debugging)
+ * Hook for direct vector search (testing/debugging)
  */
-const useRAGRetrieval = (ragServiceUrl: string) => {
-  const [contexts, setContexts] = useState<
-    Array<{ text: string; score: number }>
-  >([]);
+const useRAGQuery = (apiUrl: string) => {
+  const [results, setResults] = useState<Array<{ text: string; score: number }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const retrieve = useCallback(
-    async (query: string, topK = 5): Promise<void> => {
+  const query = useCallback(
+    async (queryText: string, topK = 5): Promise<void> => {
       setLoading(true);
       setError(null);
 
       try {
-        const response = await fetch(
-          `${ragServiceUrl}/retrieve?query=${encodeURIComponent(query)}&top_k=${topK}`,
-          { method: 'POST' }
-        );
+        const response = await fetch(`${apiUrl}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: queryText,
+            top_k: topK,
+          }),
+        });
 
         if (!response.ok) {
-          throw new Error(`Retrieval error: ${response.status}`);
+          throw new Error(`Query error: ${response.status}`);
         }
 
         const data = await response.json();
-        setContexts(data.contexts);
+        setResults(data.results || []);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Unknown error';
         setError(errorMsg);
-        console.error('Retrieval error:', err);
+        console.error('Query error:', err);
       } finally {
         setLoading(false);
       }
     },
-    [ragServiceUrl]
+    [apiUrl]
   );
 
-  return { contexts, loading, error, retrieve };
+  return { results, loading, error, query };
 };
 
 // ============================================================================
@@ -223,11 +239,9 @@ const ChatMessageComponent: React.FC<{
   const isUser = message.role === 'user';
 
   return (
-    <div
-      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
-    >
+    <div className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-xs px-4 py-3 rounded-lg ${
+        className={`max-w-md px-4 py-3 rounded-lg ${
           isUser
             ? 'bg-blue-500 text-white rounded-br-none'
             : 'bg-gray-200 text-gray-800 rounded-bl-none'
@@ -238,15 +252,17 @@ const ChatMessageComponent: React.FC<{
           {new Date(message.timestamp).toLocaleTimeString()}
         </p>
 
-        {showSources && message.sources && message.sources.length > 0 && (
-          <div className="mt-2 text-xs border-t pt-2">
-            <p className="font-semibold mb-1">Sources:</p>
-            {message.sources.map((source, idx) => (
-              <div key={idx} className="bg-opacity-50 bg-gray-300 p-1 mb-1 rounded">
-                <p className="truncate">{source.text}</p>
-                <p className="text-gray-700">Score: {source.score.toFixed(2)}</p>
-              </div>
-            ))}
+        {!isUser && showSources && (
+          <div className="mt-2 text-xs border-t border-gray-300 pt-2 space-y-1">
+            {message.sources_used !== undefined && (
+              <p>📚 Sources: {message.sources_used}</p>
+            )}
+            {message.has_live_data && (
+              <p>📡 Live data included</p>
+            )}
+            {message.county && (
+              <p>📍 County: {message.county}</p>
+            )}
           </div>
         )}
       </div>
@@ -258,7 +274,8 @@ const ChatMessageComponent: React.FC<{
  * Main AgriBot chat component
  */
 interface AgriBotProps {
-  ragServiceUrl: string;
+  apiUrl: string;
+  fips?: string;
   county?: string;
   week?: number;
   currentData?: {
@@ -277,7 +294,8 @@ interface AgriBotProps {
 }
 
 const AgriBot: React.FC<AgriBotProps> = ({
-  ragServiceUrl,
+  apiUrl,
+  fips,
   county,
   week,
   currentData,
@@ -285,9 +303,8 @@ const AgriBot: React.FC<AgriBotProps> = ({
   recommendations,
   showSources = true,
 }) => {
-  const { messages, loading, error, sendMessage, clearMessages } =
-    useRAGChat(ragServiceUrl);
-  const { isHealthy } = useRAGHealth(ragServiceUrl);
+  const { messages, loading, error, sendMessage, clearMessages } = useRAGChat(apiUrl);
+  const { isHealthy } = useRAGHealth(apiUrl);
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [showSourcesLocal, setShowSourcesLocal] = useState(showSources);
@@ -299,21 +316,17 @@ const AgriBot: React.FC<AgriBotProps> = ({
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || loading) return;
-
-    const agriContext: AgriContextData = {
-      county,
-      week,
-      csi_overall: currentData?.overall_stress_index,
+    // Pass week and stress data to sendMessage
+    const stressData = {
+      overall_stress: currentData?.overall_stress_index,
       water_stress: currentData?.water_stress_index?.value,
       heat_stress: currentData?.heat_stress_index?.value,
       vegetation_health: currentData?.vegetation_health_index?.value,
       atmospheric_stress: currentData?.atmospheric_stress_index?.value,
       predicted_yield: yield_?.predicted_yield,
       yield_uncertainty: yield_?.uncertainty,
-      recommendations,
     };
-
-    await sendMessage(inputValue, agriContext);
+    await sendMessage(inputValue, fips, week, true, stressData);
     setInputValue('');
   };
 
@@ -327,9 +340,7 @@ const AgriBot: React.FC<AgriBotProps> = ({
   if (!isHealthy) {
     return (
       <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-        <p className="text-yellow-800 font-semibold">
-          ⚠️ RAG Service Unavailable
-        </p>
+        <p className="text-yellow-800 font-semibold">⚠️ RAG Service Unavailable</p>
         <p className="text-yellow-700 text-sm mt-1">
           The AI chatbot is currently unavailable. Please try again later.
         </p>
@@ -342,26 +353,29 @@ const AgriBot: React.FC<AgriBotProps> = ({
       {/* Header */}
       <div className="bg-gradient-to-r from-green-600 to-blue-600 text-white px-4 py-3 rounded-t-lg flex justify-between items-center">
         <div>
-          <h3 className="font-bold text-lg">🤖 AgriBot</h3>
-          <p className="text-xs text-green-100">AI-powered crop insights</p>
+          <h3 className="font-bold text-lg">💬 AgriBot Assistant</h3>
+          <p className="text-xs text-green-100">Ask questions about corn stress, yields, or farming practices. AgriBot uses AI to provide intelligent insights based on your current data.</p>
         </div>
-        {county && (
+        {(county || fips) && (
           <div className="text-right text-sm">
-            <p className="font-semibold">{county}</p>
+            <p className="font-semibold">{county || fips}</p>
             {week && <p className="text-xs text-green-100">Week {week}</p>}
           </div>
         )}
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[300px] max-h-[500px]">
         {messages.length === 0 && (
           <div className="text-center text-gray-400 py-8">
+            <p className="text-4xl mb-4">🌽</p>
             <p className="text-sm">
               👋 Welcome! Ask me about corn stress, yields, or farming practices.
             </p>
             <p className="text-xs mt-2">
-              {county ? `Analyzing ${county} County - Week ${week || 'current'}` : 'Select a county to get started'}
+              {fips || county
+                ? `Analyzing ${county || `FIPS ${fips}`} - Week ${week || 'current'}`
+                : 'Select a county to get live data insights'}
             </p>
           </div>
         )}
@@ -375,7 +389,7 @@ const AgriBot: React.FC<AgriBotProps> = ({
         {loading && (
           <div className="flex justify-start">
             <div className="bg-gray-200 text-gray-800 px-4 py-3 rounded-lg rounded-bl-none">
-              <p className="text-sm">AgriBot is thinking...</p>
+              <p className="text-sm">🤖 AgriBot is thinking...</p>
             </div>
           </div>
         )}
@@ -442,11 +456,11 @@ export {
   ChatMessageComponent,
   useRAGChat,
   useRAGHealth,
-  useRAGRetrieval,
+  useRAGQuery,
   type ChatMessage,
   type AgriContextData,
-  type RAGResponse,
-  type RAGHealthStatus,
+  type ChatResponse,
+  type HealthStatus,
 };
 
 export default AgriBot;

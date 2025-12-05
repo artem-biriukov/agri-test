@@ -129,11 +129,16 @@ export default function Home() {
   const fetchData = useCallback(async (countyCode) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/mcsi/county/${countyCode}/timeseries`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://34.117.183.74/api'}/mcsi/${countyCode}/timeseries`);
       const data = await res.json();
       const fullData = Array.isArray(data) ? data : [data];
       setAllTimeseries(fullData);
-      setTimeseries(fullData);
+      // Filter to only show 2025 growing season
+    const currentSeason = fullData.filter(item => {
+      const year = item.week_start ? new Date(item.week_start).getFullYear() : 0;
+      return year === 2025;
+    });
+    setTimeseries(currentSeason.length > 0 ? currentSeason : fullData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -155,60 +160,57 @@ export default function Home() {
       if (!currentData) return;
       
       try {
-        const res = await fetch(`http://localhost:8001/forecast`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fips: county,
-            week: selectedWeek,
-            year: 2025,
-            heat_days: getValueSafe(currentData.heat_stress_index) || 10,
-            water_deficit: getValueSafe(currentData.water_stress_index) || 30,
-            precip: 120,
-            ndvi_avg: 0.65,
-            ndvi_min: 0.45
-          })
-        });
+        // Call orchestrator instead of direct yield service - uses XGBoost!
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://34.117.183.74/api'}/yield/${county}?week=${selectedWeek}`);
         if (res.ok) {
           const data = await res.json();
-          setYield(data);
+          // Map orchestrator response to expected format
+          setYield({
+            predicted_yield: data.predicted_yield,
+            uncertainty: data.confidence_interval,
+            confidence_lower: data.confidence_lower,
+            confidence_upper: data.confidence_upper,
+            model_r2: data.model_r2,
+            primary_driver: data.primary_driver
+          });
         }
       } catch (err) {
         console.error('Yield fetch error:', err);
       }
     };
     fetchYield();
-  }, [county, selectedWeek, currentData]);
+  }, [currentData, county, selectedWeek]);
 
-  const getValueSafe = (val) => {
-    if (typeof val === 'number') return val;
-    if (val?.value !== undefined) return val.value;
+  // Helper to extract value from number or object with .value property
+  const getValueSafe = (obj) => {
+    if (typeof obj === 'number') return obj;
+    if (obj && typeof obj.value === 'number') return obj.value;
     return null;
   };
 
-  const getStressColor = (val) => {
-    const v = getValueSafe(val);
-    if (!v && v !== 0) return '#999';
-    if (v < 20) return '#10b981';
-    if (v < 40) return '#3b82f6';
-    if (v < 60) return '#f59e0b';
-    if (v < 80) return '#ef4444';
-    return '#7f1d1d';
+  // ALL stress indices use same scale: 0-100, higher = MORE stress
+  // 0-20: Healthy, 20-40: Mild, 40-60: Moderate, 60-80: Severe, 80-100: Critical
+  const getStressColor = (obj) => {
+    const value = getValueSafe(obj);
+    if (value == null) return '#6b7280';
+    if (value < 20) return '#10b981';  // green - healthy
+    if (value < 40) return '#f59e0b';  // yellow - mild
+    if (value < 60) return '#f97316';  // orange - moderate
+    return '#ef4444';                   // red - severe
   };
 
-  const getStressLabel = (val) => {
-    const v = getValueSafe(val);
-    if (!v && v !== 0) return 'N/A';
-    if (v < 20) return 'HEALTHY';
-    if (v < 40) return 'MILD';
-    if (v < 60) return 'MODERATE';
-    if (v < 80) return 'SEVERE';
-    return 'CRITICAL';
+  const getStressLabel = (obj) => {
+    const value = getValueSafe(obj);
+    if (value == null) return 'N/A';
+    if (value < 20) return 'Healthy';
+    if (value < 40) return 'Mild Stress';
+    if (value < 60) return 'Moderate Stress';
+    return 'Severe Stress';
   };
 
-  const chartData = timeseries.map(item => ({
+  const chartData = timeseries.map((item) => ({
+    date: `Wk${item.week_of_season}\n${item.week_start?.slice(5, 10) || ''}`,
     week: item.week_of_season,
-    date: item.week_start ? `${item.week_start.substring(5, 7)}-${item.week_start.substring(8, 10)}` : 'N/A',
     overall: getValueSafe(item.overall_stress_index),
     water: getValueSafe(item.water_stress_index),
     heat: getValueSafe(item.heat_stress_index),
@@ -371,7 +373,8 @@ export default function Home() {
               </p>
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200" style={{ minHeight: "500px" }}>
                 <AgriBot
-                  ragServiceUrl="http://localhost:8003"
+                  apiUrl={process.env.NEXT_PUBLIC_API_URL || "http://34.117.183.74/api"}
+                  fips={county}
                   county={county}
                   week={selectedWeek}
                   currentData={currentData}

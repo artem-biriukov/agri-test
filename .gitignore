@@ -1,6 +1,67 @@
-# DVC-tracked data files (stored in GCS)
-/data_clean/
-/data_raw_new/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
 
-# DVC cache
-.dvc/cache/
+# Environment variables - NEVER COMMIT
+.env
+.env.local
+.env.production
+.env.development
+
+# Secrets and keys
+*.json
+*.key
+*.pem
+credentials/
+secrets/
+*-key.json
+service-account*.json
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Node/Next.js
+node_modules/
+.next/
+out/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.backup
+*.backup2
+*.bak
+*~
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+logs/
