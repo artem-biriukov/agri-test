@@ -4,3 +4,4 @@
 
 # DVC cache
 .dvc/cache/
+secrets/
