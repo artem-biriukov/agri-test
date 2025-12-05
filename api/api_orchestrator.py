@@ -20,7 +20,8 @@ import os
 app = FastAPI(
     title="AgriGuard API Orchestrator",
     description="Unified API for AgriGuard agricultural intelligence platform",
-    version="1.3.0"
+    version="1.3.0",
+    
 )
 
 app.add_middleware(
@@ -529,4 +530,4 @@ async def query_knowledge_base(query: str, top_k: int = 5):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8002, root_path="/api")

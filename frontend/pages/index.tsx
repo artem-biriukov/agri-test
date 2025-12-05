@@ -129,11 +129,16 @@ export default function Home() {
   const fetchData = useCallback(async (countyCode) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/mcsi/county/${countyCode}/timeseries`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://34.117.183.74/api'}/mcsi/${countyCode}/timeseries`);
       const data = await res.json();
       const fullData = Array.isArray(data) ? data : [data];
       setAllTimeseries(fullData);
-      setTimeseries(fullData);
+      // Filter to only show 2025 growing season
+    const currentSeason = fullData.filter(item => {
+      const year = item.week_start ? new Date(item.week_start).getFullYear() : 0;
+      return year === 2025;
+    });
+    setTimeseries(currentSeason.length > 0 ? currentSeason : fullData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -156,7 +161,7 @@ export default function Home() {
       
       try {
         // Call orchestrator instead of direct yield service - uses XGBoost!
-        const res = await fetch(`http://localhost:8002/yield/${county}?week=${selectedWeek}`);
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://34.117.183.74/api'}/yield/${county}?week=${selectedWeek}`);
         if (res.ok) {
           const data = await res.json();
           // Map orchestrator response to expected format
@@ -204,7 +209,7 @@ export default function Home() {
   };
 
   const chartData = timeseries.map((item) => ({
-    date: `${item.week_start?.slice(5, 10) || ''}`,
+    date: `Wk${item.week_of_season}\n${item.week_start?.slice(5, 10) || ''}`,
     week: item.week_of_season,
     overall: getValueSafe(item.overall_stress_index),
     water: getValueSafe(item.water_stress_index),
@@ -368,7 +373,7 @@ export default function Home() {
               </p>
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200" style={{ minHeight: "500px" }}>
                 <AgriBot
-                  apiUrl="http://localhost:8002"
+                  apiUrl={process.env.NEXT_PUBLIC_API_URL || "http://34.117.183.74/api"}
                   fips={county}
                   county={county}
                   week={selectedWeek}
