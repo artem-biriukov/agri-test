@@ -19,3 +19,4 @@ htmlcov/
 __pycache__/
 *.pyc
 *.pyo
+github-actions-key.json
