@@ -28,13 +28,10 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest-cov
-        # Install all requirements
+        pip install pytest pytest-cov pytest-asyncio
         pip install fastapi uvicorn httpx pandas numpy scikit-learn xgboost requests python-dotenv
         pip install chromadb google-generativeai
-        # Try to install from requirements if it exists
         if [ -f requirements.txt ]; then pip install -r requirements.txt || true; fi
-        # Try to install package in editable mode
         if [ -f setup.py ]; then pip install -e . || true; fi
         if [ -f pyproject.toml ]; then pip install -e . || true; fi
     
