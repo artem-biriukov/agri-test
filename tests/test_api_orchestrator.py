@@ -94,7 +94,7 @@ class TestErrorHandling:
         """Test handling of invalid FIPS code"""
         invalid_fips = ["99999", "abc", ""]
 
-        for fips in invalid_fips:
+        for _ in invalid_fips:
             # FIPS should be 5 digits AND start with 19 (Iowa)
             is_valid = len(fips) == 5 and fips.isdigit() and fips.startswith("19")
             # "99999" is 5 digits but not Iowa, "abc" is not digits, "" is empty

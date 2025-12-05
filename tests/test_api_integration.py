@@ -2,15 +2,14 @@
 Integration tests for API Orchestrator
 Tests actual FastAPI endpoints using TestClient
 """
-
 import pytest
-from fastapi.testclient import TestClient
 import sys
 import os
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from fastapi.testclient import TestClient
 from api.api_orchestrator import app
 
 client = TestClient(app)
@@ -38,7 +37,6 @@ class TestMCSIEndpoints:
     def test_mcsi_timeseries_endpoint_structure(self):
         """Test MCSI timeseries endpoint exists"""
         response = client.get("/mcsi/19001/timeseries?limit=30")
-        # Service unavailable is OK (no real backend)
         assert response.status_code in [200, 503, 500]
 
     def test_mcsi_single_endpoint_structure(self):

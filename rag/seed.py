@@ -1,63 +1,68 @@
-import os, sys, logging, uuid, requests, time
-from pathlib import Path
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
+import os
+import chromadb
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+CHROMADB_HOST = os.getenv("CHROMADB_HOST", "localhost")
+CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", 8000))
 
-URL = "http://chromadb:8000/api/v2"
-COLLECTION = "corn-stress-knowledge"
 
-logger.info("=== RAG Seeder ===")
-
-for attempt in range(10):
+def extract_text_from_pdf(pdf_path):
+    """Extract text from PDF file"""
     try:
-        if requests.get(f"{URL}/heartbeat", timeout=5).status_code == 200:
-            logger.info("✓ ChromaDB ready")
-            break
-    except:
-        pass
-    if attempt < 9:
-        logger.info(f"Waiting... ({attempt+1}/10)")
-        time.sleep(2)
-else:
-    logger.error("✗ Timeout")
-    sys.exit(1)
+        reader = PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+        return text
+    except Exception as e:
+        print(f"Error reading PDF: {e}")
+        return ""
 
-pdfs = list(Path("./knowledge_base/pdfs").glob("*.pdf"))
-logger.info(f"📚 {len(pdfs)} PDFs")
 
-docs, ids, metas = [], [], []
-for pdf in pdfs:
-    logger.info(f"  {pdf.name}")
-    reader = PdfReader(pdf)
-    for page in enumerate(reader.pages):
-        text = page[1].extract_text()
-        if text.strip():
-            for j in range(0, len(text), 900):
-                chunk = text[j : j + 1000]
-                if len(chunk.strip()) > 100:
-                    docs.append(chunk)
-                    ids.append(str(uuid.uuid4()))
-                    metas.append({"source": pdf.name})
-    logger.info(f"    ✓ Added")
+def chunk_text(text, chunk_size=500):
+    """Split text into chunks"""
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+    return chunks
 
-if not docs:
-    logger.error("No text")
-    sys.exit(1)
 
-logger.info(f"💾 {len(docs)} chunks")
-try:
-    requests.post(f"{URL}/collections", json={"name": COLLECTION, "metadata": {"hnsw:space": "cosine"}}, timeout=10)
-except:
-    pass
+def seed_knowledge_base():
+    """Seed ChromaDB with agricultural documents"""
+    try:
+        client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
 
-for i in range(0, len(docs), 50):
-    logger.info(f"  Batch {i//50 + 1}...")
-    requests.post(
-        f"{URL}/collections/{COLLECTION}/add",
-        json={"ids": ids[i : i + 50], "documents": docs[i : i + 50], "metadatas": metas[i : i + 50]},
-        timeout=30,
-    )
+        try:
+            client.delete_collection("corn-stress-knowledge")
+        except Exception:
+            pass
 
-logger.info("✓ Done!")
+        collection = client.create_collection("corn-stress-knowledge")
+
+        knowledge_dir = "knowledge_base"
+        if not os.path.exists(knowledge_dir):
+            print("No knowledge_base directory found")
+            return
+
+        for filename in os.listdir(knowledge_dir):
+            if filename.endswith(".pdf"):
+                pdf_path = os.path.join(knowledge_dir, filename)
+                text = extract_text_from_pdf(pdf_path)
+                chunks = chunk_text(text)
+
+                collection.add(
+                    documents=chunks,
+                    ids=[f"{filename}_{i}" for i in range(len(chunks))],
+                    metadatas=[{"source": filename} for _ in range(len(chunks))],
+                )
+                print(f"Seeded: {filename}")
+
+        print("Knowledge base seeded successfully")
+    except Exception as e:
+        print(f"Error seeding knowledge base: {e}")
+
+
+if __name__ == "__main__":
+    seed_knowledge_base()

@@ -51,7 +51,7 @@ class TestRAGVectorSearch:
 
     def test_vector_search_relevance(self):
         """Test vector search returns relevant results"""
-        query = "What is NDVI?"
+        _ = "What is NDVI?"
         mock_results = ["NDVI is a vegetation index", "NDVI measures plant health", "NDVI ranges from 0 to 1"]
 
         assert all("NDVI" in result for result in mock_results)
@@ -62,7 +62,7 @@ class TestRAGChatGeneration:
 
     def test_chat_generates_response(self):
         """Test that chat generates a response"""
-        query = "What is NDVI?"
+        _ = "What is NDVI?"
         context = ["NDVI is a vegetation index that measures plant health."]
 
         response = f"Based on the context: {context[0]}"
