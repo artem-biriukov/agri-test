@@ -3,18 +3,19 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json* yarn.lock* ./
+COPY package*.json ./
+RUN npm install
 
-# Install dependencies
-RUN npm ci || npm install
-
-# Copy source code
+# Copy source
 COPY . .
 
-# Build Next.js app
+# Set build-time environment variables
+ENV NEXT_PUBLIC_API_URL=http://34.117.183.74/api
+ENV NEXT_PUBLIC_RAG_URL=http://34.117.183.74/api
+
+# Build the app (this bakes env vars into the JS bundle)
 RUN npm run build
 
 EXPOSE 3000
 
-# Start application
 CMD ["npm", "start"]

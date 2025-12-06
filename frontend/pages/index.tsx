@@ -129,7 +129,7 @@ export default function Home() {
   const fetchData = useCallback(async (countyCode) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/mcsi/county/${countyCode}/timeseries`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api"}/mcsi/county/${countyCode}/timeseries`);
       const data = await res.json();
       const fullData = Array.isArray(data) ? data : [data];
       setAllTimeseries(fullData);
@@ -155,7 +155,7 @@ export default function Home() {
       if (!currentData) return;
       
       try {
-        const res = await fetch(`http://localhost:8001/forecast`, {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api"}/forecast`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -371,7 +371,7 @@ export default function Home() {
               </p>
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200" style={{ minHeight: "500px" }}>
                 <AgriBot
-                  ragServiceUrl="http://localhost:8003"
+                  ragServiceUrl={process.env.NEXT_PUBLIC_RAG_URL || "/api"}
                   county={county}
                   week={selectedWeek}
                   currentData={currentData}
