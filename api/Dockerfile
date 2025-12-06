@@ -1,5 +1,4 @@
 FROM python:3.11-slim
-
 WORKDIR /app
 
 # Install system dependencies
@@ -14,9 +13,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY api/ ./api/
-COPY ml-models/ ./ml-models/
+# Copy application code (we're already in the api/ directory)
+COPY . .
 
 # Expose port
 EXPOSE 8000
@@ -26,4 +24,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run FastAPI application
-CMD ["uvicorn", "api.api_orchestrator:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api_orchestrator:app", "--host", "0.0.0.0", "--port", "8000"]
