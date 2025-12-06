@@ -20,12 +20,12 @@ class TestAPIHealth:
 
     def test_health_endpoint_exists(self):
         """Test that /health endpoint exists"""
-        response = client.get("/health")
+        response = client.get("/api/health")
         assert response.status_code == 200
 
     def test_health_response_structure(self):
         """Test health response has correct structure"""
-        response = client.get("/health")
+        response = client.get("/api/health")
         data = response.json()
         assert "status" in data
         assert data["status"] == "healthy"
@@ -36,12 +36,12 @@ class TestMCSIEndpoints:
 
     def test_mcsi_timeseries_endpoint_structure(self):
         """Test MCSI timeseries endpoint exists"""
-        response = client.get("/mcsi/19001/timeseries?limit=30")
+        response = client.get("/api/mcsi/19001/timeseries?limit=30")
         assert response.status_code in [200, 503, 500]
 
     def test_mcsi_single_endpoint_structure(self):
         """Test single MCSI value endpoint exists"""
-        response = client.get("/mcsi/19001")
+        response = client.get("/api/mcsi/19001")
         assert response.status_code in [200, 503, 500]
 
 
@@ -50,12 +50,12 @@ class TestYieldEndpoints:
 
     def test_yield_forecast_endpoint_structure(self):
         """Test yield forecast endpoint exists"""
-        response = client.get("/yield/19001?week=15")
+        response = client.get("/api/yield/19001?week=15")
         assert response.status_code in [200, 500, 503]
 
     def test_yield_endpoint_validation(self):
         """Test yield endpoint parameter validation"""
-        response = client.get("/yield/19001")
+        response = client.get("/api/yield/19001")
         assert response.status_code in [200, 500, 503]
 
 
