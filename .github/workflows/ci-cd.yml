@@ -159,7 +159,7 @@ jobs:
         docker push ${{ env.AR_REGISTRY }}/mcsi:latest
         
         echo "Building Yield service..."
-        docker build -t ${{ env.AR_REGISTRY }}/yield:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/yield:latest ./ml_models/yield_prediction
+        docker build -t ${{ env.AR_REGISTRY }}/yield:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/yield:latest ./ml_models/yield_forecast
         docker push ${{ env.AR_REGISTRY }}/yield:${{ github.sha }}
         docker push ${{ env.AR_REGISTRY }}/yield:latest
         
