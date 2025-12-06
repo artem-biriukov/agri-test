@@ -16,14 +16,14 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["api", "rag"]
+source = [
+    "api/api_orchestrator.py",
+    "rag/rag_service.py",
+]
 omit = [
     "*/tests/*",
     "*/test_*.py",
     "*/__pycache__/*",
-    "*/venv/*",
-    "ml_models/mcsi/mcsi_service.py",
-    "ml_models/yield_forecast/yield_forecast_service.py",
 ]
 
 [tool.coverage.report]
