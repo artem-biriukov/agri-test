@@ -16,14 +16,16 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = [
-    "api/api_orchestrator.py",
-    "rag/rag_service.py",
-]
+source = ["api", "rag"]
 omit = [
     "*/tests/*",
     "*/test_*.py",
     "*/__pycache__/*",
+    "rag/chromadb_diagnostic.py",
+    "rag/rag_cli.py",
+    "rag/rag_service_simple.py",
+    "rag/seed.py",
+    "rag/seed_rag_knowledge_base.py",
 ]
 
 [tool.coverage.report]
