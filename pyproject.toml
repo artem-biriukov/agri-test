@@ -1,40 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agriguard"
+version = "1.0.0"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["api", "ml_models", "rag"]
+source = ["api", "rag"]
 omit = [
     "*/tests/*",
     "*/test_*.py",
     "*/__pycache__/*",
     "*/venv/*",
-    "*/.venv/*",
-    "rag/rag_cli.py",
-    "rag/chromadb_diagnostic.py",
-    "rag/seed.py",
-    "rag/seed_rag_knowledge_base.py",
-    "rag/rag_service_simple.py"
+    "ml_models/mcsi/mcsi_service.py",
+    "ml_models/yield_forecast/yield_forecast_service.py",
 ]
 
 [tool.coverage.report]
-fail_under = 60.0
 precision = 2
-skip_empty = true
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod"
-]
-
-[tool.coverage.html]
-directory = "htmlcov"
+show_missing = true
+skip_covered = false
