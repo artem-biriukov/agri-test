@@ -21,37 +21,8 @@ YIELD_URL_LOCAL = "http://localhost:8001"
 
 @app.get("/health")
 async def health_check():
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            mcsi_health = False
-            yield_health = False
-            try:
-                r = await client.get(f"{MCSI_URL}/health")
-                mcsi_health = r.status_code == 200
-            except:
-                try:
-                    r = await client.get(f"{MCSI_URL_LOCAL}/health")
-                    mcsi_health = r.status_code == 200
-                except:
-                    pass
-            try:
-                r = await client.get(f"{YIELD_URL}/health")
-                yield_health = r.status_code == 200
-            except:
-                try:
-                    r = await client.get(f"{YIELD_URL_LOCAL}/health")
-                    yield_health = r.status_code == 200
-                except:
-                    pass
-        return {
-            "status": "healthy" if mcsi_health and yield_health else "degraded",
-            "services": {
-                "mcsi": "healthy" if mcsi_health else "unhealthy",
-                "yield": "healthy" if yield_health else "unhealthy",
-            },
-        }
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    """Simple health check - verify API is running."""
+    return {"status": "healthy"}
 
 
 @app.get("/mcsi/{fips}/timeseries")
