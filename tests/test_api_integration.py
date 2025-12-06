@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi.testclient import TestClient
-from api.api_orchestrator import app
+from api.api_orchestrator import main_app as app
 
 client = TestClient(app)
 
