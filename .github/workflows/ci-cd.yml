@@ -10,7 +10,7 @@ env:
   PROJECT_ID: agriguard-ac215
   GKE_CLUSTER: agriguard-cluster
   GKE_ZONE: us-central1
-  GCR_REGISTRY: gcr.io/agriguard-ac215
+  AR_REGISTRY: us-central1-docker.pkg.dev/agriguard-ac215/agriguard
 
 jobs:
   test:
@@ -142,42 +142,44 @@ jobs:
         kubectl cluster-info
         kubectl get nodes
     
+    - name: Configure Docker for Artifact Registry
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+    
     - name: Build and push Docker images
       run: |
-        gcloud auth configure-docker
-        
         echo "Building API service..."
-        docker build -t ${{ env.GCR_REGISTRY }}/api:${{ github.sha }} -t ${{ env.GCR_REGISTRY }}/api:latest ./api
-        docker push ${{ env.GCR_REGISTRY }}/api:${{ github.sha }}
-        docker push ${{ env.GCR_REGISTRY }}/api:latest
+        docker build -t ${{ env.AR_REGISTRY }}/api:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/api:latest ./api
+        docker push ${{ env.AR_REGISTRY }}/api:${{ github.sha }}
+        docker push ${{ env.AR_REGISTRY }}/api:latest
         
         echo "Building MCSI service..."
-        docker build -t ${{ env.GCR_REGISTRY }}/mcsi:${{ github.sha }} -t ${{ env.GCR_REGISTRY }}/mcsi:latest ./ml_models/mcsi
-        docker push ${{ env.GCR_REGISTRY }}/mcsi:${{ github.sha }}
-        docker push ${{ env.GCR_REGISTRY }}/mcsi:latest
+        docker build -t ${{ env.AR_REGISTRY }}/mcsi:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/mcsi:latest ./ml_models/mcsi
+        docker push ${{ env.AR_REGISTRY }}/mcsi:${{ github.sha }}
+        docker push ${{ env.AR_REGISTRY }}/mcsi:latest
         
         echo "Building Yield service..."
-        docker build -t ${{ env.GCR_REGISTRY }}/yield:${{ github.sha }} -t ${{ env.GCR_REGISTRY }}/yield:latest ./ml_models/yield_prediction
-        docker push ${{ env.GCR_REGISTRY }}/yield:${{ github.sha }}
-        docker push ${{ env.GCR_REGISTRY }}/yield:latest
+        docker build -t ${{ env.AR_REGISTRY }}/yield:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/yield:latest ./ml_models/yield_prediction
+        docker push ${{ env.AR_REGISTRY }}/yield:${{ github.sha }}
+        docker push ${{ env.AR_REGISTRY }}/yield:latest
         
         echo "Building RAG service..."
-        docker build -t ${{ env.GCR_REGISTRY }}/rag:${{ github.sha }} -t ${{ env.GCR_REGISTRY }}/rag:latest ./rag
-        docker push ${{ env.GCR_REGISTRY }}/rag:${{ github.sha }}
-        docker push ${{ env.GCR_REGISTRY }}/rag:latest
+        docker build -t ${{ env.AR_REGISTRY }}/rag:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/rag:latest ./rag
+        docker push ${{ env.AR_REGISTRY }}/rag:${{ github.sha }}
+        docker push ${{ env.AR_REGISTRY }}/rag:latest
         
         echo "Building Frontend..."
-        docker build -t ${{ env.GCR_REGISTRY }}/frontend:${{ github.sha }} -t ${{ env.GCR_REGISTRY }}/frontend:latest ./frontend
-        docker push ${{ env.GCR_REGISTRY }}/frontend:${{ github.sha }}
-        docker push ${{ env.GCR_REGISTRY }}/frontend:latest
+        docker build -t ${{ env.AR_REGISTRY }}/frontend:${{ github.sha }} -t ${{ env.AR_REGISTRY }}/frontend:latest ./frontend
+        docker push ${{ env.AR_REGISTRY }}/frontend:${{ github.sha }}
+        docker push ${{ env.AR_REGISTRY }}/frontend:latest
     
     - name: Deploy to Kubernetes
       run: |
-        kubectl set image deployment/api api=${{ env.GCR_REGISTRY }}/api:${{ github.sha }} -n agriguard
-        kubectl set image deployment/mcsi mcsi=${{ env.GCR_REGISTRY }}/mcsi:${{ github.sha }} -n agriguard
-        kubectl set image deployment/yield yield=${{ env.GCR_REGISTRY }}/yield:${{ github.sha }} -n agriguard
-        kubectl set image deployment/rag rag=${{ env.GCR_REGISTRY }}/rag:${{ github.sha }} -n agriguard
-        kubectl set image deployment/frontend frontend=${{ env.GCR_REGISTRY }}/frontend:${{ github.sha }} -n agriguard
+        kubectl set image deployment/api api=${{ env.AR_REGISTRY }}/api:${{ github.sha }} -n agriguard
+        kubectl set image deployment/mcsi mcsi=${{ env.AR_REGISTRY }}/mcsi:${{ github.sha }} -n agriguard
+        kubectl set image deployment/yield yield=${{ env.AR_REGISTRY }}/yield:${{ github.sha }} -n agriguard
+        kubectl set image deployment/rag rag=${{ env.AR_REGISTRY }}/rag:${{ github.sha }} -n agriguard
+        kubectl set image deployment/frontend frontend=${{ env.AR_REGISTRY }}/frontend:${{ github.sha }} -n agriguard
         
         kubectl rollout status deployment/api -n agriguard --timeout=5m
         kubectl rollout status deployment/mcsi -n agriguard --timeout=5m
@@ -187,7 +189,15 @@ jobs:
     
     - name: Verify deployment
       run: |
+        echo "=== Deployment Status ==="
+        kubectl get deployments -n agriguard
+        echo ""
+        echo "=== Pod Status ==="
         kubectl get pods -n agriguard
+        echo ""
+        echo "=== Service Status ==="
         kubectl get services -n agriguard
+        echo ""
         echo "✅ Deployment completed successfully!"
-        echo "Application URL: http://34.117.183.74"
+        echo "🌐 Application URL: http://34.117.183.74"
+        echo "📝 Commit: ${{ github.sha }}"
