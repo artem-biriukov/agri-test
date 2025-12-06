@@ -1,12 +1,13 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from typing import Optional
 import logging
 
-app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0", root_path="/api")
+api_router = APIRouter()  # Create router
+main_app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0")
 
-app.add_middleware(
+main_app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
 )
 
@@ -19,13 +20,13 @@ MCSI_URL_LOCAL = "http://localhost:8000"
 YIELD_URL_LOCAL = "http://localhost:8001"
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     """Simple health check - verify API is running."""
     return {"status": "healthy"}
 
 
-@app.get("/mcsi/{fips}/timeseries")
+@api_router.get("/mcsi/{fips}/timeseries")
 async def get_mcsi_timeseries(
     fips: str, start_date: Optional[str] = None, end_date: Optional[str] = None, limit: Optional[int] = 30
 ):
@@ -52,7 +53,7 @@ async def get_mcsi_timeseries(
         raise HTTPException(status_code=503, detail="MCSI unavailable")
 
 
-@app.get("/mcsi/{fips}")
+@api_router.get("/mcsi/{fips}")
 async def get_mcsi(fips: str):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -66,7 +67,7 @@ async def get_mcsi(fips: str):
         raise HTTPException(status_code=503, detail="MCSI unavailable")
 
 
-@app.get("/yield/{fips}")
+@api_router.get("/yield/{fips}")
 async def get_yield_forecast(fips: str, week: Optional[int] = None):
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -119,7 +120,11 @@ async def get_yield_forecast(fips: str, week: Optional[int] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+# Mount API router at /api prefix
+main_app.include_router(api_router, prefix="/api")
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(main_app, host="0.0.0.0", port=8000)
