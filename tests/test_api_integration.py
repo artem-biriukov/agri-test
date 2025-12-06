@@ -28,7 +28,7 @@ class TestAPIHealth:
         response = client.get("/health")
         data = response.json()
         assert "status" in data
-        assert "services" in data or "error" in data
+        assert data["status"] == "healthy"
 
 
 class TestMCSIEndpoints:
