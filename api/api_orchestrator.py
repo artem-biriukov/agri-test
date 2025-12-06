@@ -4,7 +4,7 @@ import httpx
 from typing import Optional
 import logging
 
-app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0")
+app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0", root_path="/api")
 
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
