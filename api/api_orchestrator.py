@@ -7,6 +7,11 @@ import logging
 api_router = APIRouter()  # Create router
 main_app = FastAPI(title="AgriGuard API Orchestrator", version="1.1.0")
 
+# Root-level health check for K8s probes
+@main_app.get("/health")
+async def root_health():
+    return {"status": "healthy"}
+
 main_app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
 )
